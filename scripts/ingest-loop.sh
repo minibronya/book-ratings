@@ -28,6 +28,7 @@ echo "Starting resumable ingest loop at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a
 
 while true; do
   chunk
+  npm run db:publish 2>&1 | tee -a "$LOG"
   read -r total bm_pending gr_pending <<< "$(pending)"
   echo "After chunk: total=$total bookmarks_pending=$bm_pending goodreads_pending=$gr_pending" | tee -a "$LOG"
   if [[ "$total" == "0" ]]; then
