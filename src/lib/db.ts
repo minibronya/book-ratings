@@ -5,8 +5,8 @@ import type { BookRating, DataQualityReport } from "./types";
 export type BookSortKey =
   | "title"
   | "publishYear"
-  | "hardcoverRating"
-  | "hardcoverRatingsCount"
+  | "readerRating"
+  | "readerRatingsCount"
   | "bookmarksScore"
   | "bookmarksReviewCount"
   | "combinedScore";
@@ -14,10 +14,10 @@ export type BookSortKey =
 export type BookQuery = {
   minYear?: number;
   maxYear?: number;
-  minHardcoverRatings?: number;
+  minReaderRatings?: number;
   search?: string;
   requireBookmarks?: boolean;
-  requireHardcover?: boolean;
+  requireReader?: boolean;
   genre?: string;
   genreExact?: boolean;
   sort?: BookSortKey;
@@ -29,15 +29,14 @@ export type BookQuery = {
 const sortColumns: Record<BookSortKey, string> = {
   title: "title",
   publishYear: "publish_year",
-  hardcoverRating: "hardcover_rating",
-  hardcoverRatingsCount: "hardcover_ratings_count",
+  readerRating: "reader_rating",
+  readerRatingsCount: "reader_ratings_count",
   bookmarksScore: "bookmarks_score",
   bookmarksReviewCount: "bookmarks_review_count",
   combinedScore:
-    "case when hardcover_rating is not null and bookmarks_score is not null then ((hardcover_rating * 20.0) + bookmarks_score) / 2.0 else null end",
+    "case when reader_rating is not null and bookmarks_score is not null then ((reader_rating * 20.0) + bookmarks_score) / 2.0 else null end",
 };
 
-export const MIN_HARDCOVER_RATINGS = 25;
 export const MIN_BOOKMARKS_REVIEWS = 1;
 export const MIN_PUBLISH_YEAR = 1990;
 
@@ -65,14 +64,15 @@ export function ensureSchema(database: Database.Database) {
     create table if not exists books (
       id text primary key,
       isbn13 text not null,
+      goodreads_id text,
       title text not null,
       authors text,
       publish_year integer,
       genres text,
-      hardcover_rating real,
-      hardcover_ratings_count integer,
-      hardcover_url text,
-      hardcover_status text not null default 'pending',
+      reader_rating real,
+      reader_ratings_count integer,
+      reader_url text,
+      reader_status text not null default 'pending',
       bookmarks_grade text,
       bookmarks_review_count integer,
       rave_count integer not null default 0,
@@ -84,13 +84,45 @@ export function ensureSchema(database: Database.Database) {
       bookmarks_status text not null default 'pending',
       updated_at text not null
     );
-
+  `);
+  migratePublishedSchema(database);
+  database.exec(`
     create index if not exists idx_books_publish_year on books (publish_year);
-    create index if not exists idx_books_hardcover_rating on books (hardcover_rating);
-    create index if not exists idx_books_hardcover_ratings_count on books (hardcover_ratings_count);
+    create index if not exists idx_books_reader_rating on books (reader_rating);
+    create index if not exists idx_books_reader_ratings_count on books (reader_ratings_count);
     create index if not exists idx_books_bookmarks_score on books (bookmarks_score);
     create index if not exists idx_books_title on books (title);
   `);
+}
+
+function migratePublishedSchema(database: Database.Database) {
+  const columns = database
+    .prepare("pragma table_info(books)")
+    .all() as Array<{ name: string }>;
+  if (columns.length === 0) {
+    return;
+  }
+
+  const names = new Set(columns.map((column) => column.name));
+  const renames: Array<[string, string]> = [
+    ["hardcover_rating", "reader_rating"],
+    ["hardcover_ratings_count", "reader_ratings_count"],
+    ["hardcover_url", "reader_url"],
+    ["hardcover_status", "reader_status"],
+    ["work_key", "goodreads_id"],
+  ];
+
+  for (const [from, to] of renames) {
+    if (names.has(from) && !names.has(to)) {
+      database.exec(`alter table books rename column ${from} to ${to}`);
+      names.delete(from);
+      names.add(to);
+    }
+  }
+
+  if (!names.has("goodreads_id")) {
+    database.exec(`alter table books add column goodreads_id text`);
+  }
 }
 
 export function queryBooks(query: BookQuery = {}) {
@@ -123,19 +155,14 @@ export function queryBooks(query: BookQuery = {}) {
     params.push(query.maxYear);
   }
 
-  if (typeof query.minHardcoverRatings === "number" && query.minHardcoverRatings > 0) {
-    conditions.push("hardcover_ratings_count >= ?");
-    params.push(query.minHardcoverRatings);
-  } else {
-    conditions.push(
-      "(hardcover_ratings_count is null or hardcover_ratings_count >= ?)",
-    );
-    params.push(MIN_HARDCOVER_RATINGS);
+  if (typeof query.minReaderRatings === "number" && query.minReaderRatings > 0) {
+    conditions.push("reader_ratings_count >= ?");
+    params.push(query.minReaderRatings);
   }
 
-  if (query.requireHardcover) {
+  if (query.requireReader) {
     conditions.push(
-      "hardcover_rating is not null and hardcover_ratings_count is not null",
+      "reader_rating is not null and reader_ratings_count is not null",
     );
   }
 
@@ -256,7 +283,7 @@ export function readDataQuality(year = new Date().getFullYear()): DataQualityRep
         count(*) as totalBooks,
         sum(case when publish_year = ? then 1 else 0 end) as currentYearBooks,
         sum(case when bookmarks_status = 'matched' then 1 else 0 end) as bookmarksMatched,
-        sum(case when hardcover_status = 'matched' then 1 else 0 end) as hardcoverMatched,
+        sum(case when reader_rating is not null then 1 else 0 end) as readerMatched,
         max(updated_at) as latestUpdate
       from books
       where bookmarks_status = 'matched'
@@ -266,7 +293,7 @@ export function readDataQuality(year = new Date().getFullYear()): DataQualityRep
     totalBooks: number;
     currentYearBooks: number | null;
     bookmarksMatched: number | null;
-    hardcoverMatched: number | null;
+    readerMatched: number | null;
     latestUpdate: string | null;
   };
 
@@ -274,26 +301,27 @@ export function readDataQuality(year = new Date().getFullYear()): DataQualityRep
     totalBooks: row.totalBooks,
     currentYearBooks: row.currentYearBooks ?? 0,
     bookmarksMatched: row.bookmarksMatched ?? 0,
-    hardcoverMatched: row.hardcoverMatched ?? 0,
+    readerMatched: row.readerMatched ?? 0,
     latestUpdate: row.latestUpdate,
   };
 }
 
 export function mapBookRow(row: Record<string, unknown>): BookRating {
-  const hardcoverRating = nullableNumber(row.hardcover_rating);
+  const readerRating = nullableNumber(row.reader_rating);
   const bookmarksScore = nullableNumber(row.bookmarks_score);
 
   return {
     id: row.id as string,
     isbn13: row.isbn13 as string,
+    goodreadsId: nullableString(row.goodreads_id),
     title: row.title as string,
     authors: nullableString(row.authors),
     publishYear: nullableNumber(row.publish_year),
     genres: nullableString(row.genres),
-    hardcoverRating,
-    hardcoverRatingsCount: nullableNumber(row.hardcover_ratings_count),
-    hardcoverUrl: nullableString(row.hardcover_url),
-    hardcoverStatus: row.hardcover_status as BookRating["hardcoverStatus"],
+    readerRating,
+    readerRatingsCount: nullableNumber(row.reader_ratings_count),
+    readerUrl: nullableString(row.reader_url),
+    readerStatus: row.reader_status as BookRating["readerStatus"],
     bookmarksGrade: nullableString(row.bookmarks_grade),
     bookmarksReviewCount: nullableNumber(row.bookmarks_review_count),
     raveCount: (row.rave_count as number) ?? 0,
@@ -301,7 +329,7 @@ export function mapBookRow(row: Record<string, unknown>): BookRating {
     mixedCount: (row.mixed_count as number) ?? 0,
     panCount: (row.pan_count as number) ?? 0,
     bookmarksScore,
-    combinedScore: combinedScore(hardcoverRating, bookmarksScore),
+    combinedScore: combinedScore(readerRating, bookmarksScore),
     bookmarksUrl: nullableString(row.bookmarks_url),
     bookmarksStatus: row.bookmarks_status as BookRating["bookmarksStatus"],
     updatedAt: row.updated_at as string,
@@ -317,16 +345,12 @@ function nullableNumber(value: unknown) {
 }
 
 export function combinedScore(
-  hardcoverRating: number | null,
+  readerRating: number | null,
   bookmarksScore: number | null,
 ) {
-  if (
-    hardcoverRating === null ||
-    bookmarksScore === null ||
-    bookmarksScore <= 0
-  ) {
+  if (readerRating === null || bookmarksScore === null || bookmarksScore <= 0) {
     return null;
   }
 
-  return Math.round(((hardcoverRating * 20 + bookmarksScore) / 2) * 100) / 100;
+  return Math.round(((readerRating * 20 + bookmarksScore) / 2) * 100) / 100;
 }

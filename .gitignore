@@ -32,6 +32,7 @@ yarn-error.log*
 
 # misc
 .cache
+data/*.raw.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
 

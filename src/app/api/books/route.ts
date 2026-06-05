@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
 const sortKeys = new Set<BookSortKey>([
   "title",
   "publishYear",
-  "hardcoverRating",
-  "hardcoverRatingsCount",
+  "readerRating",
+  "readerRatingsCount",
   "combinedScore",
   "bookmarksScore",
   "bookmarksReviewCount",
@@ -18,11 +18,11 @@ export function GET(request: Request) {
   const requestedSort = params.get("sort") ?? "combinedScore";
   const minYear = parseInteger(params.get("minYear"));
   const maxYear = parseInteger(params.get("maxYear"));
-  const minHardcoverRatings = parseInteger(params.get("minHardcoverRatings"));
+  const minReaderRatings = parseInteger(params.get("minReaderRatings"));
   const page = parseInteger(params.get("page")) ?? 1;
   const pageSize = parseInteger(params.get("pageSize")) ?? 50;
   const requireBookmarks = params.get("requireBookmarks") !== "false";
-  const requireHardcover = params.get("requireHardcover") === "true";
+  const requireReader = params.get("requireReader") === "true";
   const genre = params.get("genre") ?? "";
   const genreExact = params.get("genreExact") === "true";
   const search = params.get("search") ?? "";
@@ -31,11 +31,11 @@ export function GET(request: Request) {
   const result = queryBooks({
     minYear: minYear ?? undefined,
     maxYear: maxYear ?? undefined,
-    minHardcoverRatings: minHardcoverRatings ?? undefined,
+    minReaderRatings: minReaderRatings ?? undefined,
     page,
     pageSize,
     requireBookmarks,
-    requireHardcover,
+    requireReader,
     genre,
     genreExact,
     search,

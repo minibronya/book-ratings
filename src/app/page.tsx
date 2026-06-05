@@ -8,10 +8,10 @@ export default function Home() {
     quality.totalBooks === 0
       ? 0
       : Math.round((quality.bookmarksMatched / quality.totalBooks) * 100);
-  const hardcoverRate =
+  const readerRate =
     quality.totalBooks === 0
       ? 0
-      : Math.round((quality.hardcoverMatched / quality.totalBooks) * 100);
+      : Math.round((quality.readerMatched / quality.totalBooks) * 100);
 
   return (
     <main className="shell">
@@ -19,7 +19,7 @@ export default function Home() {
         <p className="eyebrow">Book rankings</p>
         <h1>Find the best-reviewed books.</h1>
         <p>
-          Rank books by Hardcover reader ratings and Book Marks critic scores,
+          Rank books by Goodreads reader ratings and Book Marks critic scores,
           with rave / positive / mixed / pan breakdowns.
         </p>
       </section>
@@ -38,8 +38,8 @@ export default function Home() {
           <strong>{bookmarksRate}%</strong>
         </article>
         <article>
-          <span>Hardcover matched</span>
-          <strong>{hardcoverRate}%</strong>
+          <span>Goodreads matched</span>
+          <strong>{readerRate}%</strong>
         </article>
         <article>
           <span>Updated</span>

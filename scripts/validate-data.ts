@@ -15,7 +15,8 @@ const row = database
       count(*) as total,
       sum(case when bookmarks_score is null then 1 else 0 end) as missingScore,
       sum(case when bookmarks_review_count < ? then 1 else 0 end) as lowReviewCount,
-      sum(case when publish_year is not null and publish_year < ? then 1 else 0 end) as oldBooks
+      sum(case when publish_year is not null and publish_year < ? then 1 else 0 end) as oldBooks,
+      sum(case when reader_rating is not null then 1 else 0 end) as readerMatched
     from books
     where bookmarks_status = 'matched'
   `,
@@ -25,12 +26,14 @@ const row = database
   missingScore: number;
   lowReviewCount: number;
   oldBooks: number;
+  readerMatched: number;
 };
 
 database.close();
 
 console.log("Validation summary:");
 console.log(`  matched books: ${row.total}`);
+console.log(`  goodreads matched: ${row.readerMatched} (${row.total === 0 ? 0 : Math.round((row.readerMatched / row.total) * 100)}%)`);
 console.log(`  missing bookmarks_score: ${row.missingScore}`);
 console.log(`  review count below minimum: ${row.lowReviewCount}`);
 console.log(`  publish year before ${MIN_PUBLISH_YEAR}: ${row.oldBooks}`);

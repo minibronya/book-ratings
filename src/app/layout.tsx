@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Book Rankings",
   description:
-    "Hardcover reader ratings, Book Marks critic scores, and rave/positive/mixed/pan breakdowns.",
+    "Goodreads reader ratings, Book Marks critic scores, and rave/positive/mixed/pan breakdowns.",
 };
 
 export default function RootLayout({

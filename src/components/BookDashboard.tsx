@@ -11,7 +11,7 @@ export function BookDashboard({ currentYear }: Props) {
     <section className="dashboard">
       <BookTable
         title="Book rankings"
-        description="Sort and filter books by Hardcover reader ratings and Book Marks critic scores."
+        description="Sort and filter books by Goodreads reader ratings and Book Marks critic scores."
         currentYear={currentYear}
       />
     </section>

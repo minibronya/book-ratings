@@ -9,8 +9,8 @@ type SortKey =
   | "title"
   | "publishYear"
   | "combinedScore"
-  | "hardcoverRating"
-  | "hardcoverRatingsCount"
+  | "readerRating"
+  | "readerRatingsCount"
   | "bookmarksScore"
   | "bookmarksReviewCount";
 
@@ -38,15 +38,15 @@ type BookResponse = {
 const MIN_PUBLISH_YEAR = 1990;
 
 const ratingCountThresholds = [
-  25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000,
+  1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000,
 ];
 
 const columns: { key: SortKey; label: string }[] = [
   { key: "title", label: "Book" },
   { key: "publishYear", label: "Year" },
   { key: "combinedScore", label: "Combined" },
-  { key: "hardcoverRating", label: "Hardcover" },
-  { key: "hardcoverRatingsCount", label: "HC Ratings" },
+  { key: "readerRating", label: "Goodreads" },
+  { key: "readerRatingsCount", label: "GR Ratings" },
   { key: "bookmarksScore", label: "Critics" },
   { key: "bookmarksReviewCount", label: "Critic Reviews" },
 ];
@@ -63,7 +63,7 @@ export function BookTable({ title, description, currentYear }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("combinedScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [query, setQuery] = useState("");
-  const [requireHardcover, setRequireHardcover] = useState(false);
+  const [requireReader, setRequireReader] = useState(false);
   const [genre, setGenre] = useState("");
   const [exactGenre, setExactGenre] = useState(false);
   const [minRatings, setMinRatings] = useState("");
@@ -85,7 +85,7 @@ export function BookTable({ title, description, currentYear }: Props) {
     setSortKey("combinedScore");
     setSortDir("desc");
     setQuery("");
-    setRequireHardcover(false);
+    setRequireReader(false);
     setGenre("");
     setExactGenre(false);
     setMinRatings("");
@@ -106,7 +106,7 @@ export function BookTable({ title, description, currentYear }: Props) {
       page: String(page),
       pageSize: "50",
       requireBookmarks: "true",
-      requireHardcover: String(requireHardcover),
+      requireReader: String(requireReader),
     });
 
     if (currentYearOnly) {
@@ -125,7 +125,7 @@ export function BookTable({ title, description, currentYear }: Props) {
     }
 
     if (minRatings) {
-      params.set("minHardcoverRatings", minRatings);
+      params.set("minReaderRatings", minRatings);
     }
 
     if (query.trim()) {
@@ -141,7 +141,7 @@ export function BookTable({ title, description, currentYear }: Props) {
     minRatings,
     page,
     query,
-    requireHardcover,
+    requireReader,
     sortDir,
     sortKey,
     yearRange,
@@ -242,7 +242,7 @@ export function BookTable({ title, description, currentYear }: Props) {
         ) : null}
 
         <label>
-          Min Hardcover ratings
+          Min Goodreads ratings
           <select
             value={minRatings}
             onChange={(event) => {
@@ -250,7 +250,7 @@ export function BookTable({ title, description, currentYear }: Props) {
               setPage(1);
             }}
           >
-            <option value="">Default (25+)</option>
+            <option value="">Any count</option>
             {ratingCountThresholds.map((threshold) => (
               <option key={threshold} value={String(threshold)}>
                 {threshold.toLocaleString()}+
@@ -262,13 +262,13 @@ export function BookTable({ title, description, currentYear }: Props) {
         <label className="checkbox">
           <input
             type="checkbox"
-            checked={requireHardcover}
+            checked={requireReader}
             onChange={(event) => {
-              setRequireHardcover(event.target.checked);
+              setRequireReader(event.target.checked);
               setPage(1);
             }}
           />
-          Require Hardcover
+          Require Goodreads
         </label>
 
         <label className="checkbox">
@@ -336,10 +336,8 @@ export function BookTable({ title, description, currentYear }: Props) {
                 </td>
                 <td>{book.publishYear ?? "—"}</td>
                 <td>{formatScore(book.combinedScore)}</td>
-                <td>{formatRating(book.hardcoverRating)}</td>
-                <td>
-                  {book.hardcoverRatingsCount?.toLocaleString() ?? "—"}
-                </td>
+                <td>{formatRating(book.readerRating)}</td>
+                <td>{book.readerRatingsCount?.toLocaleString() ?? "—"}</td>
                 <td>{formatScore(book.bookmarksScore)}</td>
                 <td>{book.bookmarksReviewCount ?? "—"}</td>
               </tr>

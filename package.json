@@ -9,6 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "db:seed": "tsx scripts/build-db.ts --sample",
+    "db:ingest": "tsx scripts/build-db.ts --ingest",
+    "db:publish": "tsx scripts/build-db.ts --publish",
     "db:update": "tsx scripts/build-db.ts",
     "db:validate": "tsx scripts/validate-data.ts"
   },

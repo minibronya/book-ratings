@@ -11,9 +11,10 @@ export type BookmarksStatus =
   | "pending"
   | "skipped";
 
-export type HardcoverStatus =
+export type ReaderStatus =
   | "matched"
   | "not_found"
+  | "blocked"
   | "error"
   | "pending"
   | "skipped";
@@ -21,14 +22,15 @@ export type HardcoverStatus =
 export type BookRating = {
   id: string;
   isbn13: string;
+  goodreadsId: string | null;
   title: string;
   authors: string | null;
   publishYear: number | null;
   genres: string | null;
-  hardcoverRating: number | null;
-  hardcoverRatingsCount: number | null;
-  hardcoverUrl: string | null;
-  hardcoverStatus: HardcoverStatus;
+  readerRating: number | null;
+  readerRatingsCount: number | null;
+  readerUrl: string | null;
+  readerStatus: ReaderStatus;
   bookmarksGrade: string | null;
   bookmarksReviewCount: number | null;
   raveCount: number;
@@ -46,6 +48,6 @@ export type DataQualityReport = {
   totalBooks: number;
   currentYearBooks: number;
   bookmarksMatched: number;
-  hardcoverMatched: number;
+  readerMatched: number;
   latestUpdate: string | null;
 };

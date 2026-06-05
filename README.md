@@ -1,6 +1,6 @@
 # Book Rankings
 
-Rank books by **Hardcover** reader ratings and **Book Marks** critic reviews. Critic scores use a weighted average of individual verdicts:
+Rank books by **Goodreads** reader ratings and **Book Marks** critic reviews. Critic scores use a weighted average of individual verdicts:
 
 | Verdict   | Points |
 |-----------|--------|
@@ -9,19 +9,24 @@ Rank books by **Hardcover** reader ratings and **Book Marks** critic reviews. Cr
 | Mixed     | 60     |
 | Pan       | 30     |
 
-Combined score (when both sources exist): `(hardcover_rating × 20 + bookmarks_score) / 2`.
+Combined score (when both sources exist): `(goodreads_rating × 20 + bookmarks_score) / 2`.
 
 ## Quick start
 
 ```bash
 npm install
-npm run db:seed    # sample SQLite database (5 books)
+npm run db:seed
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Building the database
+## Data pipeline
+
+The ingest uses two SQLite files:
+
+- `data/book-ratings.raw.sqlite` (gitignored) — crash-safe working store, one row per catalog ISBN
+- `data/book-ratings.sqlite` (committed) — published, deduped dataset served by the app
 
 ### Sample data
 
@@ -29,42 +34,40 @@ Open [http://localhost:3000](http://localhost:3000).
 npm run db:seed
 ```
 
-### Live ingest
-
-1. Optional: set `HARDCOVER_API_TOKEN` from [Hardcover account settings](https://hardcover.app/account/api).
-2. Run a bounded ingest (defaults to 500 ISBNs from the Book Marks catalog):
+### Live ingest (incremental / resumable)
 
 ```bash
-BOOKMARKS_CATALOG_LIMIT=500 BOOKMARKS_MAX_LOOKUPS=500 npm run db:update
+npm run db:ingest    # Book Marks + Goodreads lookups into raw DB
+npm run db:publish   # dedupe, whitelist genres, write published DB
+npm run db:update    # ingest + publish
+npm run db:validate
 ```
+
+Each ingest run only processes rows still marked `pending`. Re-run until counts stop moving, then publish.
 
 Environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `BOOKMARKS_CATALOG_LIMIT` | `500` | How many ISBNs from the Book Marks list to process |
+| `BOOKMARKS_CATALOG_LIMIT` | all ISBNs | Optional ceiling on catalog size |
 | `BOOKMARKS_MAX_LOOKUPS` | all pending | Max Book Marks widget fetches per run |
 | `BOOKMARKS_DELAY_MS` | `500` | Delay between Book Marks requests |
-| `OPENLIBRARY_MAX_LOOKUPS` | all kept books | Open Library title/author/year lookups |
-| `OPENLIBRARY_DELAY_MS` | `200` | Delay between Open Library requests |
-| `HARDCOVER_MAX_LOOKUPS` | all kept books | Hardcover GraphQL lookups |
-| `HARDCOVER_DELAY_MS` | `300` | Delay between Hardcover requests |
-| `HARDCOVER_API_TOKEN` | — | Required for live Hardcover ratings |
-| `BOOK_RATINGS_DB` | `data/book-ratings.sqlite` | Database path |
+| `GOODREADS_MAX_LOOKUPS` | all pending | Max Goodreads page fetches per run |
+| `GOODREADS_DELAY_MS` | `1000` | Delay between Goodreads requests |
+| `GOODREADS_MAX_BLOCKS` | `5` | Stop run after N consecutive 403/429 responses |
+| `BOOK_RATINGS_DB` | `data/book-ratings.sqlite` | Published database path |
+| `BOOK_RATINGS_RAW_DB` | `data/book-ratings.raw.sqlite` | Raw working database path |
 
-Validate:
+### Data sources
 
-```bash
-npm run db:validate
-```
+- **Book Marks** — ISBN catalog + widget HTML (critic grade, rave/positive/mixed/pan counts, per-review verdicts)
+- **Goodreads** — `/book/isbn/{isbn}` HTML (JSON-LD ratings + Apollo `bookGenres`, title, author, year). No API key required.
 
-## Data sources
+Goodreads genres are filtered through a whitelist blocklist (drops shelves like `Audiobook`, `Book Club`, `Adult`, etc.) and capped at five per book.
 
-- **Book Marks** — `bookmarks-isbn-list.json` catalog + per-ISBN widget HTML (grade, per-critic verdicts, rave/positive/mixed/pan counts).
-- **Hardcover** — GraphQL API for community ratings (requires API token).
-- **Open Library** — ISBN metadata for title, authors, and publish year.
+Reader data is enrichment, not a gate: books with failed/blocked Goodreads lookups still publish with critic-only data.
 
-## Tests
+## Checks
 
 ```bash
 npm test
@@ -72,18 +75,16 @@ npm run lint
 npm run build
 ```
 
-Covers the Book Marks parser and weighted critic score (`100/80/60/30`).
-
 ## Deployment
 
-The app deploys on Vercel as a Next.js build with a pre-generated SQLite database committed at `data/book-ratings.sqlite`. Regenerate locally when you want fresh data:
+The app deploys on Vercel with the pre-generated `data/book-ratings.sqlite` committed to git. After growing the dataset:
 
 ```bash
-npm run db:update
+npm run db:publish
 npm run db:validate
 git add data/book-ratings.sqlite
 git commit -m "Refresh book ratings database"
 git push
 ```
 
-Vercel picks up pushes to `main` automatically once the project is linked.
+Live site: https://book-ratings-one.vercel.app
