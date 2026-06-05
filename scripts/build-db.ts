@@ -11,7 +11,11 @@ import {
   upsertRawRow,
   type RawBookRow,
 } from "../src/lib/ingest/database";
-import { cleanGenres, enrichGoodreadsRows } from "../src/lib/ingest/goodreads";
+import {
+  cleanGenres,
+  enrichGoodreadsRows,
+  fetchGoodreadsByIsbn,
+} from "../src/lib/ingest/goodreads";
 import { sampleBooks } from "./sample-data";
 
 const args = new Set(process.argv.slice(2));
@@ -75,11 +79,12 @@ async function ingestBookmarks(
 
   let lookups = 0;
   let matches = 0;
-  const delayMs = Number(process.env.BOOKMARKS_DELAY_MS ?? "500");
+  const bookmarksDelayMs = Number(process.env.BOOKMARKS_DELAY_MS ?? "500");
+  const goodreadsDelayMs = Number(process.env.GOODREADS_DELAY_MS ?? "1000");
 
   for (const row of pending.slice(0, lookupLimit)) {
     const result = await fetchBookmarksByIsbn(row.isbn13);
-    upsertRawRow(rawDatabase, {
+    let updatedRow: RawBookRow = {
       ...row,
       bookmarksGrade: result.grade,
       bookmarksReviewCount: result.reviewCount,
@@ -91,11 +96,17 @@ async function ingestBookmarks(
       bookmarksUrl: result.url,
       bookmarksStatus: result.status,
       updatedAt,
-    });
+    };
+    upsertRawRow(rawDatabase, updatedRow);
 
     lookups += 1;
     if (result.status === "matched") {
       matches += 1;
+      if (updatedRow.readerStatus === "pending") {
+        updatedRow = await applyGoodreads(updatedRow, updatedAt);
+        upsertRawRow(rawDatabase, updatedRow);
+        await sleep(goodreadsDelayMs);
+      }
     }
 
     if (lookups % 25 === 0) {
@@ -105,7 +116,7 @@ async function ingestBookmarks(
       );
     }
 
-    await sleep(delayMs);
+    await sleep(bookmarksDelayMs);
   }
 }
 
@@ -115,7 +126,7 @@ async function ingestGoodreads(
 ) {
   const pending = readRawRows(
     rawDatabase,
-    "bookmarks_status = 'matched' and reader_status = 'pending'",
+    "bookmarks_status = 'matched' and reader_status in ('pending', 'error')",
   );
   const maxLookups = Number(
     process.env.GOODREADS_MAX_LOOKUPS ?? String(pending.length),
@@ -128,28 +139,46 @@ async function ingestGoodreads(
     maxLookups: lookupLimit,
     maxConsecutiveBlocks: Number(process.env.GOODREADS_MAX_BLOCKS ?? "5"),
     onProcessed: (row, result) => {
-      const genres = cleanGenres(result.genres);
-      upsertRawRow(rawDatabase, {
-        ...row,
-        title: result.title ?? row.title,
-        authors: result.authors ?? row.authors,
-        publishYear: result.publishYear ?? row.publishYear,
-        genres: genres ?? row.genres,
-        goodreadsId: result.goodreadsId,
-        readerRating: result.readerRating,
-        readerRatingsCount: result.readerRatingsCount,
-        readerUrl: result.readerUrl,
-        readerStatus:
-          result.status === "blocked" ? "error" : result.status,
-        updatedAt,
-      });
+      upsertRawRow(
+        rawDatabase,
+        mergeGoodreads(row, result, updatedAt),
+      );
     },
   });
 }
 
+async function applyGoodreads(row: RawBookRow, updatedAt: string) {
+  const result = await fetchGoodreadsByIsbn(row.isbn13);
+  return mergeGoodreads(row, result, updatedAt);
+}
+
+function mergeGoodreads(
+  row: RawBookRow,
+  result: Awaited<ReturnType<typeof fetchGoodreadsByIsbn>>,
+  updatedAt: string,
+): RawBookRow {
+  const genres = cleanGenres(result.genres);
+  return {
+    ...row,
+    title: result.title ?? row.title,
+    authors: result.authors ?? row.authors,
+    publishYear: result.publishYear ?? row.publishYear,
+    genres: genres ?? row.genres,
+    goodreadsId: result.goodreadsId,
+    readerRating: result.readerRating,
+    readerRatingsCount: result.readerRatingsCount,
+    readerUrl: result.readerUrl,
+    readerStatus: result.status === "blocked" ? "error" : result.status,
+    updatedAt,
+  };
+}
+
 async function publishCatalog() {
   const rawDatabase = openRawDatabase(rawDatabasePath);
-  const matched = readRawRows(rawDatabase, "bookmarks_status = 'matched'");
+  const matched = readRawRows(
+    rawDatabase,
+    "bookmarks_status = 'matched' and reader_status != 'pending'",
+  );
   rawDatabase.close();
 
   const updatedAt = new Date().toISOString();
@@ -161,9 +190,14 @@ async function publishCatalog() {
   replaceBooks(database, deduped);
   database.close();
 
+  const withGoodreads = deduped.filter((book) => book.readerRating !== null).length;
+  const withTitles = deduped.filter(
+    (book) => !book.title.startsWith("ISBN "),
+  ).length;
+
   console.log(`Published ${deduped.length} books to ${databasePath}`);
   console.log(
-    `Raw matched rows: ${matched.length}; reader matched: ${deduped.filter((book) => book.readerRating !== null).length}`,
+    `Raw ready rows: ${matched.length}; with titles: ${withTitles}; with Goodreads ratings: ${withGoodreads}`,
   );
 }
 

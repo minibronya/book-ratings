@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Poll ingest progress, publish when raw data grows, commit+push published DB.
+# Poll ingest progress; publish+push only when titled book count grows.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -13,7 +13,7 @@ log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" | tee -a "$LOG"
 }
 
-counts() {
+stats() {
   npx tsx -e "
     import { openRawDatabase, countRawRows } from './src/lib/ingest/database.ts';
     import Database from 'better-sqlite3';
@@ -22,21 +22,25 @@ counts() {
       total: countRawRows(raw),
       bmMatched: countRawRows(raw, \"bookmarks_status = 'matched'\"),
       grMatched: countRawRows(raw, \"reader_status = 'matched'\"),
-      bmPending: countRawRows(raw, \"bookmarks_status = 'pending'\"),
       grPending: countRawRows(raw, \"bookmarks_status = 'matched' and reader_status = 'pending'\"),
+      grReady: countRawRows(raw, \"bookmarks_status = 'matched' and reader_status != 'pending'\"),
     };
     raw.close();
     let published = 0;
+    let titled = 0;
+    let withGr = 0;
     try {
       const pub = new Database('data/book-ratings.sqlite', { readonly: true });
-      published = (pub.prepare(\"select count(*) as c from books\").get() as { c: number }).c;
+      published = (pub.prepare('select count(*) as c from books').get() as { c: number }).c;
+      titled = (pub.prepare(\"select count(*) as c from books where title not like 'ISBN %'\").get() as { c: number }).c;
+      withGr = (pub.prepare('select count(*) as c from books where reader_rating is not null').get() as { c: number }).c;
       pub.close();
     } catch {}
-    console.log(JSON.stringify({ ...rawCounts, published }));
+    console.log(JSON.stringify({ ...rawCounts, published, titled, withGr }));
   "
 }
 
-last_published() {
+last_titled() {
   if [[ -f "$STATE" ]]; then
     cat "$STATE"
   else
@@ -44,16 +48,16 @@ last_published() {
   fi
 }
 
-save_published() {
+save_titled() {
   echo "$1" > "$STATE"
 }
 
 tick() {
-  local stats published last count
-  stats="$(counts)"
-  published="$(echo "$stats" | npx tsx -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); console.log(j.published)')" || published=0
-  last="$(last_published)"
-  log "status $stats"
+  local json titled last count
+  json="$(stats)"
+  log "status $json"
+  titled="$(echo "$json" | npx tsx -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).titled)')"
+  last="$(last_titled)"
 
   npm run db:publish >>"$LOG" 2>&1
   npm run db:validate >>"$LOG" 2>&1 || true
@@ -61,24 +65,24 @@ tick() {
   count="$(npx tsx -e "
     import Database from 'better-sqlite3';
     const db = new Database('data/book-ratings.sqlite', { readonly: true });
-    const row = db.prepare('select count(*) as c from books').get() as { c: number };
+    const row = db.prepare(\"select count(*) as c from books where title not like 'ISBN %'\").get() as { c: number };
     db.close();
     console.log(row.c);
   ")"
 
   if [[ "$count" != "$last" && "$count" -gt 0 ]]; then
-    log "published count changed: $last -> $count; committing"
+    log "titled books changed: $last -> $count; committing"
     git add data/book-ratings.sqlite
     if git diff --cached --quiet; then
       log "no sqlite diff after publish"
     else
-      git commit -m "Refresh book ratings database ($count books)."
+      git commit -m "Refresh book ratings database ($count titled books)."
       git push
-      log "pushed $count books to origin"
+      log "pushed $count titled books to origin"
     fi
-    save_published "$count"
+    save_titled "$count"
   else
-    log "no publishable change (count=$count last=$last)"
+    log "no titled-book change (titled=$count last=$last); skipping push"
   fi
 }
 
@@ -87,6 +91,6 @@ tick
 
 while true; do
   sleep "$INTERVAL"
-  echo "AGENT_LOOP_TICK_book_ingest {\"prompt\":\"Poll book-ratings ingest: run watch-ingest tick (publish/commit/push if count grew). Check data/watch.log and ingest.log.\"}"
+  echo "AGENT_LOOP_TICK_book_ingest {\"prompt\":\"Poll book-ratings ingest\"}"
   tick
 done
