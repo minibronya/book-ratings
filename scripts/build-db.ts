@@ -13,8 +13,8 @@ import {
 } from "../src/lib/ingest/database";
 import {
   cleanGenres,
-  enrichGoodreadsRows,
-  fetchGoodreadsByIsbn,
+  fetchGoodreadsWithRetry,
+  type GoodreadsParseResult,
 } from "../src/lib/ingest/goodreads";
 import { sampleBooks } from "./sample-data";
 
@@ -25,6 +25,10 @@ const databasePath =
 const rawDatabasePath =
   process.env.BOOK_RATINGS_RAW_DB ??
   path.join(process.cwd(), "data", "book-ratings.raw.sqlite");
+
+const CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? "4");
+const INTER_BATCH_MS = Number(process.env.INGEST_INTER_BATCH_MS ?? "250");
+const MAX_BLOCKED_BATCHES = Number(process.env.GOODREADS_MAX_BLOCKED_BATCHES ?? "3");
 
 async function main() {
   if (args.has("--sample")) {
@@ -53,74 +57,22 @@ async function ingestCatalog() {
   console.log("Loading Book Marks ISBN catalog...");
   const isbnList = await fetchBookmarksIsbnList();
   const catalogLimit = Number(process.env.BOOKMARKS_CATALOG_LIMIT ?? "0");
-  const catalog =
-    catalogLimit > 0 ? isbnList.slice(0, catalogLimit) : isbnList;
+  const catalog = catalogLimit > 0 ? isbnList.slice(0, catalogLimit) : isbnList;
   console.log(`Catalog size: ${catalog.length} ISBNs.`);
 
   const updatedAt = new Date().toISOString();
   const rawDatabase = openRawDatabase(rawDatabasePath);
   seedRawCatalog(rawDatabase, catalog, updatedAt);
 
-  await ingestBookmarks(rawDatabase, updatedAt);
-  await ingestGoodreads(rawDatabase, updatedAt);
+  // 1) Backlog: rows that already have Book Marks but still need Goodreads.
+  await ingestGoodreadsBacklog(rawDatabase, updatedAt);
+  // 2) New rows: fetch Book Marks then Goodreads so each published row is complete.
+  await ingestNewBookmarks(rawDatabase, updatedAt);
+
   rawDatabase.close();
 }
 
-async function ingestBookmarks(
-  rawDatabase: ReturnType<typeof openRawDatabase>,
-  updatedAt: string,
-) {
-  const pending = readRawRows(rawDatabase, "bookmarks_status = 'pending'");
-  const maxLookups = Number(
-    process.env.BOOKMARKS_MAX_LOOKUPS ?? String(pending.length),
-  );
-  const lookupLimit = Math.min(maxLookups, pending.length);
-  console.log(`Looking up ${lookupLimit} Book Marks widgets.`);
-
-  let lookups = 0;
-  let matches = 0;
-  const bookmarksDelayMs = Number(process.env.BOOKMARKS_DELAY_MS ?? "500");
-  const goodreadsDelayMs = Number(process.env.GOODREADS_DELAY_MS ?? "1000");
-
-  for (const row of pending.slice(0, lookupLimit)) {
-    const result = await fetchBookmarksByIsbn(row.isbn13);
-    let updatedRow: RawBookRow = {
-      ...row,
-      bookmarksGrade: result.grade,
-      bookmarksReviewCount: result.reviewCount,
-      raveCount: result.counts.rave,
-      positiveCount: result.counts.positive,
-      mixedCount: result.counts.mixed,
-      panCount: result.counts.pan,
-      bookmarksScore: result.bookmarksScore,
-      bookmarksUrl: result.url,
-      bookmarksStatus: result.status,
-      updatedAt,
-    };
-    upsertRawRow(rawDatabase, updatedRow);
-
-    lookups += 1;
-    if (result.status === "matched") {
-      matches += 1;
-      if (updatedRow.readerStatus === "pending") {
-        updatedRow = await applyGoodreads(updatedRow, updatedAt);
-        upsertRawRow(rawDatabase, updatedRow);
-        await sleep(goodreadsDelayMs);
-      }
-    }
-
-    if (lookups % 25 === 0) {
-      const matchRate = Math.round((matches / lookups) * 100);
-      console.log(
-        `Book Marks lookups: ${lookups}/${lookupLimit} (${matches} matched, ${matchRate}%)`,
-      );
-    }
-
-    await sleep(bookmarksDelayMs);
-  }
-}
-
-async function ingestGoodreads(
+async function ingestGoodreadsBacklog(
   rawDatabase: ReturnType<typeof openRawDatabase>,
   updatedAt: string,
 ) {
@@ -131,30 +83,153 @@ async function ingestGoodreads(
   const maxLookups = Number(
     process.env.GOODREADS_MAX_LOOKUPS ?? String(pending.length),
   );
-  const lookupLimit = Math.min(maxLookups, pending.length);
-  console.log(`Looking up ${lookupLimit} Goodreads pages.`);
+  const rows = pending.slice(0, Math.min(maxLookups, pending.length));
+  if (rows.length === 0) {
+    return;
+  }
 
-  await enrichGoodreadsRows(pending.slice(0, lookupLimit), {
-    delayMs: Number(process.env.GOODREADS_DELAY_MS ?? "1000"),
-    maxLookups: lookupLimit,
-    maxConsecutiveBlocks: Number(process.env.GOODREADS_MAX_BLOCKS ?? "5"),
-    onProcessed: (row, result) => {
-      upsertRawRow(
-        rawDatabase,
-        mergeGoodreads(row, result, updatedAt),
-      );
-    },
-  });
+  console.log(`Goodreads backlog: ${rows.length} rows (concurrency ${CONCURRENCY}).`);
+  await processGoodreads(rawDatabase, rows, updatedAt);
 }
 
-async function applyGoodreads(row: RawBookRow, updatedAt: string) {
-  const result = await fetchGoodreadsByIsbn(row.isbn13);
-  return mergeGoodreads(row, result, updatedAt);
+async function ingestNewBookmarks(
+  rawDatabase: ReturnType<typeof openRawDatabase>,
+  updatedAt: string,
+) {
+  const pending = readRawRows(rawDatabase, "bookmarks_status = 'pending'");
+  const maxLookups = Number(
+    process.env.BOOKMARKS_MAX_LOOKUPS ?? String(pending.length),
+  );
+  const rows = pending.slice(0, Math.min(maxLookups, pending.length));
+  if (rows.length === 0) {
+    return;
+  }
+
+  console.log(`Book Marks: ${rows.length} rows (concurrency ${CONCURRENCY}).`);
+
+  let processed = 0;
+  let matched = 0;
+  let blockedBatches = 0;
+
+  for (let i = 0; i < rows.length; i += CONCURRENCY) {
+    const batch = rows.slice(i, i + CONCURRENCY);
+    const bookmarkResults = await Promise.all(
+      batch.map((row) => fetchBookmarksByIsbn(row.isbn13)),
+    );
+
+    const merged: RawBookRow[] = batch.map((row, idx) => {
+      const result = bookmarkResults[idx];
+      return {
+        ...row,
+        bookmarksGrade: result.grade,
+        bookmarksReviewCount: result.reviewCount,
+        raveCount: result.counts.rave,
+        positiveCount: result.counts.positive,
+        mixedCount: result.counts.mixed,
+        panCount: result.counts.pan,
+        bookmarksScore: result.bookmarksScore,
+        bookmarksUrl: result.url,
+        bookmarksStatus: result.status,
+        updatedAt,
+      };
+    });
+
+    // Only the matched ones need Goodreads; persist the rest immediately.
+    const needGoodreads = merged.filter((row) => row.bookmarksStatus === "matched");
+    for (const row of merged) {
+      if (row.bookmarksStatus !== "matched") {
+        upsertRawRow(rawDatabase, row);
+      }
+    }
+
+    if (needGoodreads.length > 0) {
+      const goodreadsResults = await Promise.all(
+        needGoodreads.map((row) => fetchGoodreadsWithRetry(row.isbn13)),
+      );
+      const allBlocked = goodreadsResults.every((r) => r.status === "blocked");
+      goodreadsResults.forEach((result, idx) => {
+        upsertRawRow(rawDatabase, mergeGoodreads(needGoodreads[idx], result, updatedAt));
+      });
+      matched += needGoodreads.length;
+
+      if (allBlocked) {
+        blockedBatches += 1;
+        if (blockedBatches >= MAX_BLOCKED_BATCHES) {
+          console.log(
+            `Stopping Book Marks ingest after ${blockedBatches} fully-blocked Goodreads batches.`,
+          );
+          return;
+        }
+      } else {
+        blockedBatches = 0;
+      }
+    }
+
+    processed += batch.length;
+    if (processed % 100 === 0 || processed === rows.length) {
+      console.log(
+        `Book Marks processed: ${processed}/${rows.length} (${matched} bookmark-matched).`,
+      );
+    }
+
+    if (INTER_BATCH_MS > 0) {
+      await sleep(INTER_BATCH_MS);
+    }
+  }
+}
+
+async function processGoodreads(
+  rawDatabase: ReturnType<typeof openRawDatabase>,
+  rows: RawBookRow[],
+  updatedAt: string,
+) {
+  let processed = 0;
+  let matched = 0;
+  let blockedBatches = 0;
+
+  for (let i = 0; i < rows.length; i += CONCURRENCY) {
+    const batch = rows.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((row) => fetchGoodreadsWithRetry(row.isbn13)),
+    );
+
+    const allBlocked = results.every((r) => r.status === "blocked");
+    results.forEach((result, idx) => {
+      if (result.status === "matched") {
+        matched += 1;
+      }
+      upsertRawRow(rawDatabase, mergeGoodreads(batch[idx], result, updatedAt));
+    });
+
+    if (allBlocked) {
+      blockedBatches += 1;
+      if (blockedBatches >= MAX_BLOCKED_BATCHES) {
+        console.log(
+          `Stopping Goodreads backlog after ${blockedBatches} fully-blocked batches.`,
+        );
+        return;
+      }
+    } else {
+      blockedBatches = 0;
+    }
+
+    processed += batch.length;
+    if (processed % 100 === 0 || processed === rows.length) {
+      const rate = Math.round((matched / processed) * 100);
+      console.log(
+        `Goodreads processed: ${processed}/${rows.length} (${matched} matched, ${rate}%).`,
+      );
+    }
+
+    if (INTER_BATCH_MS > 0) {
+      await sleep(INTER_BATCH_MS);
+    }
+  }
 }
 
 function mergeGoodreads(
   row: RawBookRow,
-  result: Awaited<ReturnType<typeof fetchGoodreadsByIsbn>>,
+  result: GoodreadsParseResult,
   updatedAt: string,
 ): RawBookRow {
   const genres = cleanGenres(result.genres);
@@ -177,23 +252,19 @@ async function publishCatalog() {
   const rawDatabase = openRawDatabase(rawDatabasePath);
   const matched = readRawRows(
     rawDatabase,
-    "bookmarks_status = 'matched' and reader_status != 'pending'",
+    "bookmarks_status = 'matched' and reader_status != 'pending' and title not like 'ISBN %'",
   );
   rawDatabase.close();
 
   const updatedAt = new Date().toISOString();
-  const deduped = dedupeBooks(
-    matched.map((row) => rawRowToBook(row, updatedAt)),
-  );
+  const deduped = dedupeBooks(matched.map((row) => rawRowToBook(row, updatedAt)));
 
   const database = openWritableDatabase(databasePath);
   replaceBooks(database, deduped);
   database.close();
 
   const withGoodreads = deduped.filter((book) => book.readerRating !== null).length;
-  const withTitles = deduped.filter(
-    (book) => !book.title.startsWith("ISBN "),
-  ).length;
+  const withTitles = deduped.filter((book) => !book.title.startsWith("ISBN ")).length;
 
   console.log(`Published ${deduped.length} books to ${databasePath}`);
   console.log(

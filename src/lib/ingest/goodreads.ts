@@ -133,6 +133,19 @@ export async function fetchGoodreadsByIsbn(
   }
 }
 
+export async function fetchGoodreadsWithRetry(
+  isbn13: string,
+  options: { retryDelayMs?: number } = {},
+): Promise<GoodreadsParseResult> {
+  const first = await fetchGoodreadsByIsbn(isbn13);
+  if (first.status !== "error") {
+    return first;
+  }
+
+  await sleep(options.retryDelayMs ?? 500);
+  return fetchGoodreadsByIsbn(isbn13);
+}
+
 export async function enrichGoodreadsRows<
   T extends { isbn13: string; readerStatus: ReaderStatus },
 >(
