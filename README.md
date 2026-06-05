@@ -45,6 +45,14 @@ npm run db:validate
 
 Each ingest run only processes rows still marked `pending`. Re-run until counts stop moving, then publish.
 
+For the full ~50k catalog, use the resumable loop (publishes after each chunk):
+
+```bash
+BOOKMARKS_MAX_LOOKUPS=3000 GOODREADS_MAX_LOOKUPS=1500 ./scripts/ingest-loop.sh
+```
+
+Progress is logged to `data/ingest.log`. When a chunk finishes, commit `data/book-ratings.sqlite` and push to update the live site.
+
 Environment variables:
 
 | Variable | Default | Purpose |
