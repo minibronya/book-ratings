@@ -33,7 +33,8 @@ database.close();
 
 console.log("Validation summary:");
 console.log(`  matched books: ${row.total}`);
-console.log(`  goodreads matched: ${row.readerMatched} (${row.total === 0 ? 0 : Math.round((row.readerMatched / row.total) * 100)}%)`);
+const readerMatched = row.readerMatched ?? 0;
+console.log(`  goodreads matched: ${readerMatched} (${row.total === 0 ? 0 : Math.round((readerMatched / row.total) * 100)}%)`);
 console.log(`  missing bookmarks_score: ${row.missingScore}`);
 console.log(`  review count below minimum: ${row.lowReviewCount}`);
 console.log(`  publish year before ${MIN_PUBLISH_YEAR}: ${row.oldBooks}`);
