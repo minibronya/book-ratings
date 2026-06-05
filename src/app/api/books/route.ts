@@ -19,10 +19,10 @@ export function GET(request: Request) {
   const minYear = parseInteger(params.get("minYear"));
   const maxYear = parseInteger(params.get("maxYear"));
   const minReaderRatings = parseInteger(params.get("minReaderRatings"));
+  const minBookmarksReviews = parseInteger(params.get("minBookmarksReviews"));
   const page = parseInteger(params.get("page")) ?? 1;
   const pageSize = parseInteger(params.get("pageSize")) ?? 50;
   const requireBookmarks = params.get("requireBookmarks") !== "false";
-  const requireReader = params.get("requireReader") === "true";
   const genre = params.get("genre") ?? "";
   const genreExact = params.get("genreExact") === "true";
   const search = params.get("search") ?? "";
@@ -32,10 +32,10 @@ export function GET(request: Request) {
     minYear: minYear ?? undefined,
     maxYear: maxYear ?? undefined,
     minReaderRatings: minReaderRatings ?? undefined,
+    minBookmarksReviews: minBookmarksReviews ?? undefined,
     page,
     pageSize,
     requireBookmarks,
-    requireReader,
     genre,
     genreExact,
     search,

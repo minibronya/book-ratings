@@ -15,6 +15,7 @@ export type BookQuery = {
   minYear?: number;
   maxYear?: number;
   minReaderRatings?: number;
+  minBookmarksReviews?: number;
   search?: string;
   requireBookmarks?: boolean;
   requireReader?: boolean;
@@ -132,13 +133,19 @@ export function queryBooks(query: BookQuery = {}) {
   const sort = query.sort ?? "combinedScore";
   const sortColumn = sortColumns[sort];
 
+  const minBookmarksReviews =
+    typeof query.minBookmarksReviews === "number" &&
+    query.minBookmarksReviews > MIN_BOOKMARKS_REVIEWS
+      ? query.minBookmarksReviews
+      : MIN_BOOKMARKS_REVIEWS;
+
   const baseConditions = [
     "bookmarks_status = 'matched'",
     "bookmarks_review_count >= ?",
     "(publish_year is null or publish_year >= ?)",
   ];
   const baseParams: (number | string)[] = [
-    MIN_BOOKMARKS_REVIEWS,
+    minBookmarksReviews,
     MIN_PUBLISH_YEAR,
   ];
 

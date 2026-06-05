@@ -37,9 +37,11 @@ type BookResponse = {
 
 const MIN_PUBLISH_YEAR = 1990;
 
-const ratingCountThresholds = [
+const readerRatingCountThresholds = [
   1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000,
 ];
+
+const criticReviewThresholds = [3, 5, 10, 15, 20, 25];
 
 const columns: { key: SortKey; label: string }[] = [
   { key: "title", label: "Book" },
@@ -63,10 +65,10 @@ export function BookTable({ title, description, currentYear }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("combinedScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [query, setQuery] = useState("");
-  const [requireReader, setRequireReader] = useState(false);
   const [genre, setGenre] = useState("");
   const [exactGenre, setExactGenre] = useState(false);
   const [minRatings, setMinRatings] = useState("");
+  const [minCriticReviews, setMinCriticReviews] = useState("");
   const [currentYearOnly, setCurrentYearOnly] = useState(false);
   const [yearRange, setYearRange] = useState<[number, number] | null>(null);
   const [page, setPage] = useState(1);
@@ -85,10 +87,10 @@ export function BookTable({ title, description, currentYear }: Props) {
     setSortKey("combinedScore");
     setSortDir("desc");
     setQuery("");
-    setRequireReader(false);
     setGenre("");
     setExactGenre(false);
     setMinRatings("");
+    setMinCriticReviews("");
     setCurrentYearOnly(false);
     setYearRange(null);
     setPage(1);
@@ -106,7 +108,6 @@ export function BookTable({ title, description, currentYear }: Props) {
       page: String(page),
       pageSize: "50",
       requireBookmarks: "true",
-      requireReader: String(requireReader),
     });
 
     if (currentYearOnly) {
@@ -128,6 +129,10 @@ export function BookTable({ title, description, currentYear }: Props) {
       params.set("minReaderRatings", minRatings);
     }
 
+    if (minCriticReviews) {
+      params.set("minBookmarksReviews", minCriticReviews);
+    }
+
     if (query.trim()) {
       params.set("search", query.trim());
     }
@@ -138,10 +143,10 @@ export function BookTable({ title, description, currentYear }: Props) {
     currentYearOnly,
     exactGenre,
     genre,
+    minCriticReviews,
     minRatings,
     page,
     query,
-    requireReader,
     sortDir,
     sortKey,
     yearRange,
@@ -251,7 +256,7 @@ export function BookTable({ title, description, currentYear }: Props) {
             }}
           >
             <option value="">Any count</option>
-            {ratingCountThresholds.map((threshold) => (
+            {readerRatingCountThresholds.map((threshold) => (
               <option key={threshold} value={String(threshold)}>
                 {threshold.toLocaleString()}+
               </option>
@@ -259,16 +264,22 @@ export function BookTable({ title, description, currentYear }: Props) {
           </select>
         </label>
 
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={requireReader}
+        <label>
+          Min critic reviews
+          <select
+            value={minCriticReviews}
             onChange={(event) => {
-              setRequireReader(event.target.checked);
+              setMinCriticReviews(event.target.value);
               setPage(1);
             }}
-          />
-          Require Goodreads
+          >
+            <option value="">Any count</option>
+            {criticReviewThresholds.map((threshold) => (
+              <option key={threshold} value={String(threshold)}>
+                {threshold}+
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="checkbox">
