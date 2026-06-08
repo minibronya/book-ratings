@@ -229,13 +229,17 @@ export function queryBooks(query: BookQuery = {}) {
       )
       .all(...params) as Record<string, unknown>[];
 
+    const books = rows.map(mapBookRow);
+
     return {
-      books: rows.map(mapBookRow),
+      books,
       total: countRow.count,
       page: 1,
       pageSize: 1,
       pageCount: Math.max(countRow.count, 1),
-      genreOptions: collectGenreOptions(genreFacetConditions, genreFacetParams),
+      genreOptions: books[0]
+        ? parseGenreList(books[0].genres)
+        : collectGenreOptions(genreFacetConditions, genreFacetParams),
       yearBounds: collectYearBounds(baseConditions, baseParams),
     };
   }
@@ -290,6 +294,22 @@ function collectYearBounds(
   };
 }
 
+function parseGenreList(genres: string | null) {
+  if (!genres) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  for (const genre of genres.split(",")) {
+    const trimmed = genre.trim();
+    if (trimmed) {
+      unique.add(trimmed);
+    }
+  }
+
+  return [...unique].sort((a, b) => a.localeCompare(b));
+}
+
 function collectGenreOptions(
   baseConditions: string[],
   baseParams: (number | string)[],
@@ -306,15 +326,8 @@ function collectGenreOptions(
 
   const genres = new Set<string>();
   for (const row of rows) {
-    if (!row.genres) {
-      continue;
-    }
-
-    for (const genre of row.genres.split(",")) {
-      const trimmed = genre.trim();
-      if (trimmed) {
-        genres.add(trimmed);
-      }
+    for (const genre of parseGenreList(row.genres)) {
+      genres.add(genre);
     }
   }
 

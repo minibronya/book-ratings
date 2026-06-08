@@ -250,6 +250,14 @@ export function BookTable({ title, description, currentYear }: Props) {
     setPage(1);
   }
 
+  const genreOptions = randomPickActive
+    ? (response.books[0]?.genres ?? "")
+        .split(",")
+        .map((genre) => genre.trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b))
+    : response.genreOptions;
+
   return (
     <section className="panel">
       <div className="panelHeader">
@@ -290,8 +298,10 @@ export function BookTable({ title, description, currentYear }: Props) {
               }
             }}
           >
-            <option value="">All genres</option>
-            {response.genreOptions.map((option) => (
+            <option value="">
+              {randomPickActive ? "Genres of pick" : "All genres"}
+            </option>
+            {genreOptions.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
