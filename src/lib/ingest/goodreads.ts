@@ -44,6 +44,35 @@ type JsonLdBook = {
   };
 };
 
+export function splitGenres(genres: string | null) {
+  if (!genres) {
+    return [];
+  }
+
+  return genres
+    .split(",")
+    .map((genre) => genre.trim())
+    .filter(Boolean);
+}
+
+/** Persist everything Goodreads returned; filter later at publish time. */
+export function storeRawGenres(names: string[]): string | null {
+  const kept: string[] = [];
+
+  for (const name of names) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (!kept.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+      kept.push(trimmed);
+    }
+  }
+
+  return kept.length > 0 ? kept.join(",") : null;
+}
+
 export function cleanGenres(names: string[]): string | null {
   const kept: string[] = [];
 
@@ -63,6 +92,10 @@ export function cleanGenres(names: string[]): string | null {
   }
 
   return kept.length > 0 ? kept.join(",") : null;
+}
+
+export function cleanStoredGenres(genres: string | null) {
+  return cleanGenres(splitGenres(genres));
 }
 
 export function parseGoodreadsPage(html: string, isbn13: string): GoodreadsParseResult {

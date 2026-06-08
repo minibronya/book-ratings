@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanGenres,
+  cleanStoredGenres,
   extractEmbeddedIsbn13,
   parseGoodreadsPage,
+  storeRawGenres,
 } from "./goodreads";
 
 function pageWithBody(body: string) {
@@ -18,6 +20,20 @@ const crawdadsSnippet = `
 https://www.goodreads.com/book/show/37703550-where-the-crawdads-sing
 `;
 
+describe("storeRawGenres", () => {
+  it("keeps all scraped shelves without blocklist filtering", () => {
+    expect(
+      storeRawGenres([
+        "Fiction",
+        "Book Club",
+        "Historical Fiction",
+        "Audiobook",
+        "Adult",
+      ]),
+    ).toBe("Fiction,Book Club,Historical Fiction,Audiobook,Adult");
+  });
+});
+
 describe("cleanGenres", () => {
   it("drops non-genre shelves and keeps up to five", () => {
     expect(
@@ -31,6 +47,12 @@ describe("cleanGenres", () => {
         "Adult",
       ]),
     ).toBe("Fiction,Book Club,Historical Fiction,Mystery,Romance");
+  });
+
+  it("filters stored raw genres at publish time", () => {
+    expect(
+      cleanStoredGenres("Fiction,Book Club,Historical Fiction,Audiobook,Adult"),
+    ).toBe("Fiction,Book Club,Historical Fiction");
   });
 });
 

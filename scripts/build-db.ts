@@ -12,8 +12,9 @@ import {
   type RawBookRow,
 } from "../src/lib/ingest/database";
 import {
-  cleanGenres,
+  cleanStoredGenres,
   fetchGoodreadsWithRetry,
+  storeRawGenres,
   type GoodreadsParseResult,
 } from "../src/lib/ingest/goodreads";
 import { sampleBooks } from "./sample-data";
@@ -232,7 +233,7 @@ function mergeGoodreads(
   result: GoodreadsParseResult,
   updatedAt: string,
 ): RawBookRow {
-  const genres = cleanGenres(result.genres);
+  const genres = storeRawGenres(result.genres);
   return {
     ...row,
     title: result.title ?? row.title,
@@ -290,7 +291,7 @@ function rawRowToBook(row: RawBookRow, updatedAt: string): BookRating {
     title: row.title,
     authors: row.authors,
     publishYear: row.publishYear,
-    genres: row.genres,
+    genres: cleanStoredGenres(row.genres),
     readerRating,
     readerRatingsCount: row.readerRatingsCount,
     readerUrl: row.readerUrl,
