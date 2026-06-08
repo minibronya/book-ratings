@@ -30,7 +30,7 @@ describe("cleanGenres", () => {
         "Romance",
         "Adult",
       ]),
-    ).toBe("Fiction,Historical Fiction,Mystery,Romance");
+    ).toBe("Fiction,Book Club,Historical Fiction,Mystery,Romance");
   });
 });
 
@@ -50,7 +50,7 @@ describe("parseGoodreadsPage", () => {
     expect(parsed.readerRating).toBe(4.37);
     expect(parsed.readerRatingsCount).toBe(3723645);
     expect(parsed.goodreadsId).toBe("37703550");
-    expect(cleanGenres(parsed.genres)).toBe("Fiction,Historical Fiction");
+    expect(cleanGenres(parsed.genres)).toBe("Fiction,Book Club,Historical Fiction");
   });
 
   it("returns not_found when embedded isbn does not match", () => {

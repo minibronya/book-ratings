@@ -7,7 +7,6 @@ export const GENRE_BLOCKLIST = new Set(
     "audiobook",
     "audio",
     "audible",
-    "book club",
     "adult",
     "owned",
     "to read",
