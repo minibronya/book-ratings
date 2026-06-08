@@ -11,6 +11,7 @@
     "db:seed": "tsx scripts/build-db.ts --sample",
     "db:ingest": "tsx scripts/build-db.ts --ingest",
     "db:publish": "tsx scripts/build-db.ts --publish",
+    "db:refresh-genres": "tsx scripts/refresh-goodreads-genres.ts",
     "db:update": "tsx scripts/build-db.ts",
     "db:validate": "tsx scripts/validate-data.ts"
   },
