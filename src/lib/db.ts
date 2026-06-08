@@ -41,6 +41,10 @@ const sortColumns: Record<BookSortKey, string> = {
 export const MIN_BOOKMARKS_REVIEWS = 1;
 export const MIN_PUBLISH_YEAR = 1990;
 
+export function currentPublishYear() {
+  return new Date().getFullYear();
+}
+
 const databasePath =
   process.env.BOOK_RATINGS_DB ??
   path.join(process.cwd(), "data", "book-ratings.sqlite");
@@ -139,14 +143,18 @@ export function queryBooks(query: BookQuery = {}) {
       ? query.minBookmarksReviews
       : MIN_BOOKMARKS_REVIEWS;
 
+  const maxYear = currentPublishYear();
+
   const baseConditions = [
     "bookmarks_status = 'matched'",
     "bookmarks_review_count >= ?",
     "(publish_year is null or publish_year >= ?)",
+    "(publish_year is null or publish_year <= ?)",
   ];
   const baseParams: (number | string)[] = [
     minBookmarksReviews,
     MIN_PUBLISH_YEAR,
+    maxYear,
   ];
 
   const conditions = [...baseConditions];
@@ -244,10 +252,10 @@ function collectYearBounds(
     )
     .get(...baseParams) as { minYear: number | null; maxYear: number | null };
 
-  const fallback = new Date().getFullYear();
+  const fallback = currentPublishYear();
   return {
     min: row.minYear ?? MIN_PUBLISH_YEAR,
-    max: row.maxYear ?? fallback,
+    max: Math.min(row.maxYear ?? fallback, fallback),
   };
 }
 

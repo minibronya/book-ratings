@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { BookRating } from "../src/lib/types";
-import { combinedScore } from "../src/lib/db";
+import { combinedScore, currentPublishYear } from "../src/lib/db";
 import { fetchBookmarksByIsbn, fetchBookmarksIsbnList } from "../src/lib/ingest/bookmarks";
 import {
   openRawDatabase,
@@ -257,7 +257,14 @@ async function publishCatalog() {
   rawDatabase.close();
 
   const updatedAt = new Date().toISOString();
-  const deduped = dedupeBooks(matched.map((row) => rawRowToBook(row, updatedAt)));
+  const maxYear = currentPublishYear();
+  const deduped = dedupeBooks(
+    matched
+      .filter(
+        (row) => row.publishYear === null || row.publishYear <= maxYear,
+      )
+      .map((row) => rawRowToBook(row, updatedAt)),
+  );
 
   const database = openWritableDatabase(databasePath);
   replaceBooks(database, deduped);
