@@ -43,6 +43,8 @@ const readerRatingCountThresholds = [
 
 const criticReviewThresholds = [3, 5, 10, 15, 20, 25];
 
+const combinedScoreThresholds = [70, 75, 80, 85, 90];
+
 const columns: { key: SortKey; label: string }[] = [
   { key: "title", label: "Book" },
   { key: "publishYear", label: "Year" },
@@ -69,9 +71,12 @@ export function BookTable({ title, description, currentYear }: Props) {
   const [exactGenre, setExactGenre] = useState(false);
   const [minRatings, setMinRatings] = useState("");
   const [minCriticReviews, setMinCriticReviews] = useState("");
+  const [minCombinedScore, setMinCombinedScore] = useState("");
   const [currentYearOnly, setCurrentYearOnly] = useState(false);
   const [yearRange, setYearRange] = useState<[number, number] | null>(null);
   const [page, setPage] = useState(1);
+  const [randomPickActive, setRandomPickActive] = useState(false);
+  const [randomNonce, setRandomNonce] = useState(0);
   const [response, setResponse] = useState<BookResponse>({
     books: [],
     total: 0,
@@ -83,6 +88,36 @@ export function BookTable({ title, description, currentYear }: Props) {
   });
   const [loadedEndpoint, setLoadedEndpoint] = useState("");
 
+  const filterKey = useMemo(
+    () =>
+      JSON.stringify({
+        currentYear,
+        currentYearOnly,
+        exactGenre,
+        genre,
+        minCombinedScore,
+        minCriticReviews,
+        minRatings,
+        query,
+        yearRange,
+      }),
+    [
+      currentYear,
+      currentYearOnly,
+      exactGenre,
+      genre,
+      minCombinedScore,
+      minCriticReviews,
+      minRatings,
+      query,
+      yearRange,
+    ],
+  );
+
+  useEffect(() => {
+    setRandomPickActive(false);
+  }, [filterKey]);
+
   const resetFilters = () => {
     setSortKey("combinedScore");
     setSortDir("desc");
@@ -91,9 +126,11 @@ export function BookTable({ title, description, currentYear }: Props) {
     setExactGenre(false);
     setMinRatings("");
     setMinCriticReviews("");
+    setMinCombinedScore("");
     setCurrentYearOnly(false);
     setYearRange(null);
     setPage(1);
+    setRandomPickActive(false);
   };
 
   const bounds = response.yearBounds;
@@ -103,10 +140,6 @@ export function BookTable({ title, description, currentYear }: Props) {
 
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({
-      sort: sortKey,
-      sortDir,
-      page: String(page),
-      pageSize: "50",
       requireBookmarks: "true",
     });
 
@@ -133,8 +166,22 @@ export function BookTable({ title, description, currentYear }: Props) {
       params.set("minBookmarksReviews", minCriticReviews);
     }
 
+    if (minCombinedScore) {
+      params.set("minCombinedScore", minCombinedScore);
+    }
+
     if (query.trim()) {
       params.set("search", query.trim());
+    }
+
+    if (randomPickActive) {
+      params.set("randomPick", "true");
+      params.set("randomNonce", String(randomNonce));
+    } else {
+      params.set("sort", sortKey);
+      params.set("sortDir", sortDir);
+      params.set("page", String(page));
+      params.set("pageSize", "50");
     }
 
     return `/api/books?${params.toString()}`;
@@ -143,10 +190,13 @@ export function BookTable({ title, description, currentYear }: Props) {
     currentYearOnly,
     exactGenre,
     genre,
+    minCombinedScore,
     minCriticReviews,
     minRatings,
     page,
     query,
+    randomNonce,
+    randomPickActive,
     sortDir,
     sortKey,
     yearRange,
@@ -175,6 +225,10 @@ export function BookTable({ title, description, currentYear }: Props) {
   }, [endpoint]);
 
   function toggleSort(key: SortKey) {
+    if (randomPickActive) {
+      return;
+    }
+
     setPage(1);
     if (sortKey === key) {
       setSortDir((current) => (current === "desc" ? "asc" : "desc"));
@@ -185,6 +239,17 @@ export function BookTable({ title, description, currentYear }: Props) {
     setSortDir("desc");
   }
 
+  function toggleRandomPick() {
+    if (randomPickActive) {
+      setRandomPickActive(false);
+      return;
+    }
+
+    setRandomNonce((current) => current + 1);
+    setRandomPickActive(true);
+    setPage(1);
+  }
+
   return (
     <section className="panel">
       <div className="panelHeader">
@@ -193,7 +258,9 @@ export function BookTable({ title, description, currentYear }: Props) {
           <p>{description}</p>
         </div>
         <span>
-          {response.total.toLocaleString()} books
+          {randomPickActive
+            ? `Random pick from ${response.total.toLocaleString()} books`
+            : `${response.total.toLocaleString()} books`}
           {loadedEndpoint === endpoint ? "" : " · loading"}
         </span>
       </div>
@@ -245,6 +312,24 @@ export function BookTable({ title, description, currentYear }: Props) {
             Only this genre
           </label>
         ) : null}
+
+        <label>
+          Min combined score
+          <select
+            value={minCombinedScore}
+            onChange={(event) => {
+              setMinCombinedScore(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Any score</option>
+            {combinedScoreThresholds.map((threshold) => (
+              <option key={threshold} value={String(threshold)}>
+                {threshold}+
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label>
           Min Goodreads ratings
@@ -307,6 +392,15 @@ export function BookTable({ title, description, currentYear }: Props) {
           />
         </div>
 
+        <button
+          type="button"
+          className={`randomPickButton${randomPickActive ? " active" : ""}`}
+          aria-pressed={randomPickActive}
+          onClick={toggleRandomPick}
+        >
+          Pick at Random
+        </button>
+
         <button type="button" className="resetButton" onClick={resetFilters}>
           Reset filters
         </button>
@@ -319,7 +413,11 @@ export function BookTable({ title, description, currentYear }: Props) {
               <th>Verdicts</th>
               {columns.map((column) => (
                 <th key={column.key}>
-                  <button type="button" onClick={() => toggleSort(column.key)}>
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(column.key)}
+                    disabled={randomPickActive}
+                  >
                     {column.label}
                     {sortKey === column.key ? (sortDir === "desc" ? " ↓" : " ↑") : ""}
                   </button>
@@ -357,29 +455,35 @@ export function BookTable({ title, description, currentYear }: Props) {
         </table>
       </div>
 
-      <div className="pagination">
-        <span>
-          Page {response.page} of {response.pageCount}
-        </span>
-        <div>
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((current) => Math.max(current - 1, 1))}
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            disabled={page >= response.pageCount}
-            onClick={() =>
-              setPage((current) => Math.min(current + 1, response.pageCount))
-            }
-          >
-            Next
-          </button>
+      {randomPickActive ? (
+        <div className="pagination">
+          <span>Showing 1 random book</span>
         </div>
-      </div>
+      ) : (
+        <div className="pagination">
+          <span>
+            Page {response.page} of {response.pageCount}
+          </span>
+          <div>
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(current - 1, 1))}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={page >= response.pageCount}
+              onClick={() =>
+                setPage((current) => Math.min(current + 1, response.pageCount))
+              }
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

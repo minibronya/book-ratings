@@ -16,6 +16,7 @@ export type BookQuery = {
   maxYear?: number;
   minReaderRatings?: number;
   minBookmarksReviews?: number;
+  minCombinedScore?: number;
   search?: string;
   requireBookmarks?: boolean;
   requireReader?: boolean;
@@ -25,6 +26,7 @@ export type BookQuery = {
   sortDir?: "asc" | "desc";
   page?: number;
   pageSize?: number;
+  randomPick?: boolean;
 };
 
 const sortColumns: Record<BookSortKey, string> = {
@@ -175,6 +177,11 @@ export function queryBooks(query: BookQuery = {}) {
     params.push(query.minReaderRatings);
   }
 
+  if (typeof query.minCombinedScore === "number" && query.minCombinedScore > 0) {
+    conditions.push(`(${sortColumns.combinedScore}) >= ?`);
+    params.push(query.minCombinedScore);
+  }
+
   if (query.requireReader) {
     conditions.push(
       "reader_rating is not null and reader_ratings_count is not null",
@@ -208,6 +215,30 @@ export function queryBooks(query: BookQuery = {}) {
   const countRow = getDb()
     .prepare(`select count(*) as count from books where ${whereClause}`)
     .get(...params) as { count: number };
+
+  if (query.randomPick) {
+    const rows = getDb()
+      .prepare(
+        `
+        select *
+        from books
+        where ${whereClause}
+        order by random()
+        limit 1
+      `,
+      )
+      .all(...params) as Record<string, unknown>[];
+
+    return {
+      books: rows.map(mapBookRow),
+      total: countRow.count,
+      page: 1,
+      pageSize: 1,
+      pageCount: Math.max(countRow.count, 1),
+      genreOptions: collectGenreOptions(genreFacetConditions, genreFacetParams),
+      yearBounds: collectYearBounds(baseConditions, baseParams),
+    };
+  }
 
   const direction = query.sortDir === "asc" ? "asc" : "desc";
   const orderExpression =

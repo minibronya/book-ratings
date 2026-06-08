@@ -20,9 +20,11 @@ export function GET(request: Request) {
   const maxYear = parseInteger(params.get("maxYear"));
   const minReaderRatings = parseInteger(params.get("minReaderRatings"));
   const minBookmarksReviews = parseInteger(params.get("minBookmarksReviews"));
+  const minCombinedScore = parseNumber(params.get("minCombinedScore"));
   const page = parseInteger(params.get("page")) ?? 1;
   const pageSize = parseInteger(params.get("pageSize")) ?? 50;
   const requireBookmarks = params.get("requireBookmarks") !== "false";
+  const randomPick = params.get("randomPick") === "true";
   const genre = params.get("genre") ?? "";
   const genreExact = params.get("genreExact") === "true";
   const search = params.get("search") ?? "";
@@ -33,9 +35,11 @@ export function GET(request: Request) {
     maxYear: maxYear ?? undefined,
     minReaderRatings: minReaderRatings ?? undefined,
     minBookmarksReviews: minBookmarksReviews ?? undefined,
+    minCombinedScore: minCombinedScore ?? undefined,
     page,
     pageSize,
     requireBookmarks,
+    randomPick,
     genre,
     genreExact,
     search,
@@ -59,4 +63,13 @@ function parseInteger(value: string | null) {
 
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : null;
+}
+
+function parseNumber(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
