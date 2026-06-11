@@ -6,6 +6,7 @@ import {
   fetchGoodreadsWithRetry,
   hasBlocklistedGenreInStored,
   storeRawGenres,
+  type GoodreadsParseResult,
 } from "../src/lib/ingest/goodreads";
 
 const publishedDatabasePath =
@@ -15,13 +16,18 @@ const rawDatabasePath =
   process.env.BOOK_RATINGS_RAW_DB ??
   path.join(process.cwd(), "data", "book-ratings.raw.sqlite");
 
-const CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? "2");
-const INTER_BATCH_MS = Number(process.env.INGEST_INTER_BATCH_MS ?? "750");
-const JITTER_MS = Number(process.env.INGEST_JITTER_MS ?? "400");
-const MAX_BLOCKED_BATCHES = Number(process.env.GOODREADS_MAX_BLOCKED_BATCHES ?? "3");
-const MAX_DEAD_BATCHES = Number(process.env.GOODREADS_MAX_DEAD_BATCHES ?? "5");
-const MAX_LOOKUPS = Number(process.env.REFRESH_MAX_LOOKUPS ?? "1500");
-const LOG_EVERY = Number(process.env.REFRESH_LOG_EVERY ?? "50");
+const CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? "12");
+const REQUEST_DELAY_MS = Number(process.env.INGEST_REQUEST_DELAY_MS ?? "0");
+// Abort the chunk if this many consecutive results come back blocked (the WAF
+// token refresh is failing to recover); the loop will then back off.
+const MAX_CONSECUTIVE_BLOCKS = Number(
+  process.env.GOODREADS_MAX_CONSECUTIVE_BLOCKS ?? "20",
+);
+const MAX_LOOKUPS = Number(process.env.REFRESH_MAX_LOOKUPS ?? "3000");
+const LOG_EVERY = Number(process.env.REFRESH_LOG_EVERY ?? "100");
+// After this many transient errors (timeouts), give up on a book and mark it
+// terminal so the run can finish instead of retrying it forever.
+const MAX_ERROR_ATTEMPTS = Number(process.env.REFRESH_MAX_ERROR_ATTEMPTS ?? "4");
 
 // Exit codes consumed by refresh-loop.sh.
 const EXIT_CHUNK_OK = 0; // chunk processed, more may remain
@@ -67,28 +73,45 @@ async function main() {
     create table if not exists genre_refresh_log (
       goodreads_id text primary key,
       status text not null,
+      attempts integer not null default 0,
       refreshed_at text not null
     );
   `);
+  // Migrate older tables that predate the attempts column.
+  const hasAttempts = (
+    rawDatabase.prepare("pragma table_info(genre_refresh_log)").all() as Array<{
+      name: string;
+    }>
+  ).some((c) => c.name === "attempts");
+  if (!hasAttempts) {
+    rawDatabase.exec(
+      "alter table genre_refresh_log add column attempts integer not null default 0",
+    );
+  }
 
   const lookupGenres = rawDatabase.prepare(
     "select genres from raw_books where goodreads_id = ? limit 1",
   );
-  const loggedIds = new Set(
+  const logMap = new Map<string, { status: string; attempts: number }>(
     (
       rawDatabase
-        .prepare("select goodreads_id from genre_refresh_log")
-        .all() as Array<{ goodreads_id: string }>
-    ).map((row) => row.goodreads_id),
+        .prepare("select goodreads_id, status, attempts from genre_refresh_log")
+        .all() as Array<{ goodreads_id: string; status: string; attempts: number }>
+    ).map((row) => [row.goodreads_id, { status: row.status, attempts: row.attempts }]),
   );
 
   // A book is "pending" if its raw genres still look like the old cleaned set
-  // (no blocklisted shelves) AND we haven't already reached a terminal outcome
-  // for it. Transient blocked/error attempts are intentionally NOT logged, so
-  // they remain pending and get retried on a later chunk after backoff.
+  // (no blocklisted shelves) AND we haven't reached a terminal outcome for it.
+  // A logged "error" is only terminal once it has exhausted its retry budget;
+  // blocked attempts are never logged, so they always remain pending.
   const allPending = books.filter((book) => {
-    if (loggedIds.has(book.goodreadsId)) {
-      return false;
+    const entry = logMap.get(book.goodreadsId);
+    if (entry) {
+      const terminal =
+        entry.status !== "error" || entry.attempts >= MAX_ERROR_ATTEMPTS;
+      if (terminal) {
+        return false;
+      }
     }
     const row = lookupGenres.get(book.goodreadsId) as
       | { genres: string | null }
@@ -108,7 +131,7 @@ async function main() {
     `Refreshing Goodreads genres: chunk of ${pending.length} (${allPending.length} pending of ${books.length} total).`,
   );
   logLine(
-    `Settings: concurrency=${CONCURRENCY}, inter-batch=${INTER_BATCH_MS}ms (+0-${JITTER_MS}ms jitter), log every ${LOG_EVERY}.`,
+    `Settings: concurrency=${CONCURRENCY}, request-delay=${REQUEST_DELAY_MS}ms, log every ${LOG_EVERY}.`,
   );
 
   const updateGenres = rawDatabase.prepare(`
@@ -117,10 +140,11 @@ async function main() {
     where goodreads_id = ?
   `);
   const logOutcome = rawDatabase.prepare(`
-    insert into genre_refresh_log (goodreads_id, status, refreshed_at)
-    values (?, ?, ?)
+    insert into genre_refresh_log (goodreads_id, status, attempts, refreshed_at)
+    values (?, ?, ?, ?)
     on conflict(goodreads_id) do update set
       status = excluded.status,
+      attempts = excluded.attempts,
       refreshed_at = excluded.refreshed_at
   `);
 
@@ -128,95 +152,84 @@ async function main() {
   let processed = 0;
   let updated = 0;
   let failed = 0;
-  let blockedBatches = 0;
-  let deadBatches = 0;
+  let consecutiveBlocks = 0;
   let exitCode = EXIT_CHUNK_OK;
+  let aborted = false;
+  let nextIndex = 0;
 
-  for (let i = 0; i < pending.length; i += CONCURRENCY) {
-    const batch = pending.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(
-      batch.map((book) => fetchGoodreadsWithRetry(book.isbn13)),
-    );
-
-    let batchBlocked = 0;
-    let batchReachedServer = 0; // matched or not_found => server responded, not a block
-
-    rawDatabase.transaction(() => {
-      results.forEach((result, idx) => {
-        const book = batch[idx];
-        processed += 1;
-
-        if (result.status === "blocked") {
-          failed += 1;
-          batchBlocked += 1;
-          return; // do not log: retry later
-        }
-
-        if (result.status === "error") {
-          failed += 1;
-          return; // transient: do not log, retry later
-        }
-
-        if (result.status !== "matched") {
-          // not_found / not_reviewed: server responded, terminal.
-          batchReachedServer += 1;
-          failed += 1;
-          logOutcome.run(book.goodreadsId, result.status, updatedAt);
-          return;
-        }
-
-        batchReachedServer += 1;
+  const recordOutcome = rawDatabase.transaction(
+    (book: PublishedBook, result: GoodreadsParseResult) => {
+      if (result.status === "matched") {
         const genres = storeRawGenres(result.genres);
-        if (!genres) {
+        if (genres) {
+          const change = updateGenres.run(genres, updatedAt, book.goodreadsId);
+          if (change.changes > 0) {
+            updated += change.changes;
+          }
+          logOutcome.run(book.goodreadsId, "matched", 0, updatedAt);
+        } else {
           failed += 1;
-          logOutcome.run(book.goodreadsId, "no_genres", updatedAt);
+          logOutcome.run(book.goodreadsId, "no_genres", 0, updatedAt);
+        }
+      } else if (result.status === "blocked") {
+        // WAF block: never logged; backoff + token refresh handles recovery.
+        failed += 1;
+      } else if (result.status === "error") {
+        // Transient timeout/network error: record an attempt so a permanently
+        // failing book eventually becomes terminal instead of looping forever.
+        failed += 1;
+        const attempts = (logMap.get(book.goodreadsId)?.attempts ?? 0) + 1;
+        logOutcome.run(book.goodreadsId, "error", attempts, updatedAt);
+      } else {
+        // not_found / not_reviewed: server responded, terminal.
+        failed += 1;
+        logOutcome.run(book.goodreadsId, result.status, 0, updatedAt);
+      }
+    },
+  );
+
+  async function worker() {
+    while (!aborted) {
+      const i = nextIndex;
+      nextIndex += 1;
+      if (i >= pending.length) {
+        return;
+      }
+      const book = pending[i];
+      const result = await fetchGoodreadsWithRetry(book.isbn13);
+
+      recordOutcome(book, result);
+      processed += 1;
+
+      if (result.status === "blocked") {
+        consecutiveBlocks += 1;
+        if (consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
+          logLine(
+            `THROTTLED: ${consecutiveBlocks} consecutive blocked results; WAF token refresh not recovering. Backing off.`,
+          );
+          exitCode = EXIT_THROTTLED;
+          aborted = true;
           return;
         }
-
-        const change = updateGenres.run(genres, updatedAt, book.goodreadsId);
-        if (change.changes > 0) {
-          updated += change.changes;
-        }
-        logOutcome.run(book.goodreadsId, "matched", updatedAt);
-      });
-    })();
-
-    if (batchBlocked === batch.length && batch.length > 0) {
-      blockedBatches += 1;
-      if (blockedBatches >= MAX_BLOCKED_BATCHES) {
-        logLine(
-          `BLOCKED: ${blockedBatches} fully-blocked batches (403/429). Backing off.`,
-        );
-        exitCode = EXIT_THROTTLED;
-        break;
+      } else if (result.status !== "error") {
+        consecutiveBlocks = 0;
       }
-    } else {
-      blockedBatches = 0;
-    }
 
-    if (batchReachedServer === 0) {
-      deadBatches += 1;
-      if (deadBatches >= MAX_DEAD_BATCHES) {
+      if (processed % LOG_EVERY === 0 || processed === pending.length) {
         logLine(
-          `THROTTLED: ${deadBatches} consecutive batches reached no server. Backing off.`,
+          `Processed ${processed}/${pending.length} this chunk (${updated} rows updated, ${failed} failed).`,
         );
-        exitCode = EXIT_THROTTLED;
-        break;
       }
-    } else {
-      deadBatches = 0;
-    }
 
-    if (processed <= CONCURRENCY || processed % LOG_EVERY === 0 || processed === pending.length) {
-      logLine(
-        `Processed ${processed}/${pending.length} this chunk (${updated} rows updated, ${failed} failed).`,
-      );
-    }
-
-    if (INTER_BATCH_MS > 0 || JITTER_MS > 0) {
-      await sleep(INTER_BATCH_MS + Math.floor(Math.random() * (JITTER_MS + 1)));
+      if (REQUEST_DELAY_MS > 0) {
+        await sleep(REQUEST_DELAY_MS);
+      }
     }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker),
+  );
 
   const remaining = allPending.length - updated;
   rawDatabase.close();

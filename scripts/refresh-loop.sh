@@ -7,9 +7,9 @@ mkdir -p data
 touch "$LOG"
 
 # Tunables (env-overridable).
-CONCURRENCY="${INGEST_CONCURRENCY:-3}"
-INTER_BATCH_MS="${INGEST_INTER_BATCH_MS:-400}"
-CHUNK="${REFRESH_MAX_LOOKUPS:-1500}"
+CONCURRENCY="${INGEST_CONCURRENCY:-12}"
+REQUEST_DELAY_MS="${INGEST_REQUEST_DELAY_MS:-0}"
+CHUNK="${REFRESH_MAX_LOOKUPS:-3000}"
 BACKOFF_BASE_SEC="${REFRESH_BACKOFF_BASE_SEC:-600}"   # 10 min after first throttle
 BACKOFF_MAX_SEC="${REFRESH_BACKOFF_MAX_SEC:-1800}"    # cap at 30 min
 SHORT_SLEEP_SEC="${REFRESH_SHORT_SLEEP_SEC:-20}"      # between clean chunks
@@ -23,13 +23,13 @@ EXIT_THROTTLED=3
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 echo "" >>"$LOG"
-echo "=== refresh-loop start $(ts) (concurrency=$CONCURRENCY chunk=$CHUNK) ===" >>"$LOG"
+echo "=== refresh-loop start $(ts) (concurrency=$CONCURRENCY delay=${REQUEST_DELAY_MS}ms chunk=$CHUNK) ===" >>"$LOG"
 
 backoff="$BACKOFF_BASE_SEC"
 
 while true; do
   INGEST_CONCURRENCY="$CONCURRENCY" \
-  INGEST_INTER_BATCH_MS="$INTER_BATCH_MS" \
+  INGEST_REQUEST_DELAY_MS="$REQUEST_DELAY_MS" \
   REFRESH_MAX_LOOKUPS="$CHUNK" \
     npm run db:refresh-genres >>"$LOG" 2>&1
   code=$?

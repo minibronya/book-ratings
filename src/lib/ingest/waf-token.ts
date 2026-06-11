@@ -10,9 +10,14 @@ const SOLVE_URL =
 
 let cachedToken: string | null = null;
 let solving: Promise<string | null> | null = null;
+let solveCount = 0;
 
 export function currentWafToken(): string | null {
   return cachedToken;
+}
+
+export function wafSolveCount(): number {
+  return solveCount;
 }
 
 /**
@@ -25,6 +30,7 @@ export async function refreshWafToken(): Promise<string | null> {
   }
   solving = solveWafToken()
     .then((token) => {
+      solveCount += 1;
       if (token) {
         cachedToken = token;
       }

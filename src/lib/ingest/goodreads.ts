@@ -157,7 +157,9 @@ async function fetchGoodreadsOnce(isbn13: string): Promise<GoodreadsParseResult>
     const response = await fetch(url, {
       headers,
       redirect: "follow",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(
+        Number(process.env.GOODREADS_TIMEOUT_MS ?? "12000"),
+      ),
     });
 
     // AWS WAF serves a JS challenge as HTTP 202 with an `x-amzn-waf-action:
