@@ -1,4 +1,5 @@
 import type { ReaderStatus } from "../types";
+import { GOODREADS_UA, currentWafToken, refreshWafToken } from "./waf-token";
 
 const GOODREADS_ISBN_URL = "https://www.goodreads.com/book/isbn";
 
@@ -140,19 +141,21 @@ export function parseGoodreadsPage(html: string, isbn13: string): GoodreadsParse
   };
 }
 
-export async function fetchGoodreadsByIsbn(
-  isbn13: string,
-): Promise<GoodreadsParseResult> {
+async function fetchGoodreadsOnce(isbn13: string): Promise<GoodreadsParseResult> {
   const url = `${GOODREADS_ISBN_URL}/${isbn13}`;
+  const headers: Record<string, string> = {
+    "user-agent": GOODREADS_UA,
+    "accept-language": "en-US,en;q=0.9",
+    accept: "text/html,application/xhtml+xml",
+  };
+  const token = currentWafToken();
+  if (token) {
+    headers.cookie = `aws-waf-token=${token}`;
+  }
 
   try {
     const response = await fetch(url, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        "accept-language": "en-US,en;q=0.9",
-        accept: "text/html,application/xhtml+xml",
-      },
+      headers,
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
     });
@@ -186,6 +189,25 @@ export async function fetchGoodreadsByIsbn(
   } catch {
     return emptyGoodreadsResult("error");
   }
+}
+
+export async function fetchGoodreadsByIsbn(
+  isbn13: string,
+  options: { allowTokenRefresh?: boolean } = {},
+): Promise<GoodreadsParseResult> {
+  const allowTokenRefresh = options.allowTokenRefresh ?? true;
+  const result = await fetchGoodreadsOnce(isbn13);
+
+  // If blocked by the WAF challenge, solve it once (single-flight across
+  // concurrent callers) and retry with the fresh token.
+  if (result.status === "blocked" && allowTokenRefresh) {
+    const token = await refreshWafToken();
+    if (token) {
+      return fetchGoodreadsOnce(isbn13);
+    }
+  }
+
+  return result;
 }
 
 export async function fetchGoodreadsWithRetry(
