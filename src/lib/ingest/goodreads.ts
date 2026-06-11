@@ -98,6 +98,13 @@ export function cleanStoredGenres(genres: string | null) {
   return cleanGenres(splitGenres(genres));
 }
 
+/** True when stored genres still include a shelf we only keep in raw pulls. */
+export function hasBlocklistedGenreInStored(genres: string | null) {
+  return splitGenres(genres).some((genre) =>
+    GENRE_BLOCKLIST.has(genre.toLowerCase()),
+  );
+}
+
 export function parseGoodreadsPage(html: string, isbn13: string): GoodreadsParseResult {
   const embeddedIsbn = extractEmbeddedIsbn13(html);
   if (embeddedIsbn && embeddedIsbn !== isbn13) {
@@ -150,7 +157,16 @@ export async function fetchGoodreadsByIsbn(
       signal: AbortSignal.timeout(15000),
     });
 
-    if (response.status === 403 || response.status === 429) {
+    // AWS WAF serves a JS challenge as HTTP 202 with an `x-amzn-waf-action:
+    // challenge` header and a tiny body that loads challenge.js. A plain fetch
+    // cannot solve it, so treat it as blocked (never let it fall through to a
+    // false `not_found`, which would get logged as a terminal outcome).
+    if (
+      response.status === 403 ||
+      response.status === 429 ||
+      response.status === 202 ||
+      response.headers.get("x-amzn-waf-action") === "challenge"
+    ) {
       return emptyGoodreadsResult("blocked");
     }
 
@@ -159,6 +175,13 @@ export async function fetchGoodreadsByIsbn(
     }
 
     const html = await response.text();
+    if (
+      html.includes("awswaf") ||
+      html.includes("AwsWafIntegration") ||
+      html.includes("challenge-container")
+    ) {
+      return emptyGoodreadsResult("blocked");
+    }
     return parseGoodreadsPage(html, isbn13);
   } catch {
     return emptyGoodreadsResult("error");

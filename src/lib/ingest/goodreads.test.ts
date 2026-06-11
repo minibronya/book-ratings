@@ -3,6 +3,7 @@ import {
   cleanGenres,
   cleanStoredGenres,
   extractEmbeddedIsbn13,
+  hasBlocklistedGenreInStored,
   parseGoodreadsPage,
   storeRawGenres,
 } from "./goodreads";
@@ -19,6 +20,18 @@ const crawdadsSnippet = `
 "bookGenres":[{"__typename":"BookGenre","genre":{"name":"Fiction"}},{"__typename":"BookGenre","genre":{"name":"Book Club"}},{"__typename":"BookGenre","genre":{"name":"Historical Fiction"}},{"__typename":"BookGenre","genre":{"name":"Audiobook"}}]
 https://www.goodreads.com/book/show/37703550-where-the-crawdads-sing
 `;
+
+describe("hasBlocklistedGenreInStored", () => {
+  it("detects blocklisted shelves in stored genre strings", () => {
+    expect(hasBlocklistedGenreInStored("Fiction,Audiobook,Historical Fiction")).toBe(
+      true,
+    );
+    expect(hasBlocklistedGenreInStored("Fiction,Book Club,Historical Fiction")).toBe(
+      false,
+    );
+    expect(hasBlocklistedGenreInStored("Fiction,Historical Fiction")).toBe(false);
+  });
+});
 
 describe("storeRawGenres", () => {
   it("keeps all scraped shelves without blocklist filtering", () => {
