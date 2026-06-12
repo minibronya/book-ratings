@@ -17,7 +17,7 @@ type SortKey =
 type Props = {
   title: string;
   description: string;
-  currentYear: number;
+  latestUpdate: string | null;
 };
 
 type YearBounds = {
@@ -63,7 +63,9 @@ function formatRating(value: number | null) {
   return value === null ? "—" : value.toFixed(2);
 }
 
-export function BookTable({ title, description, currentYear }: Props) {
+const BOOK_CLUB_GENRE = "Book Club";
+
+export function BookTable({ title, description, latestUpdate }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("combinedScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [query, setQuery] = useState("");
@@ -72,7 +74,6 @@ export function BookTable({ title, description, currentYear }: Props) {
   const [minRatings, setMinRatings] = useState("");
   const [minCriticReviews, setMinCriticReviews] = useState("");
   const [minCombinedScore, setMinCombinedScore] = useState("");
-  const [currentYearOnly, setCurrentYearOnly] = useState(false);
   const [yearRange, setYearRange] = useState<[number, number] | null>(null);
   const [page, setPage] = useState(1);
   const [randomPickActive, setRandomPickActive] = useState(false);
@@ -84,15 +85,13 @@ export function BookTable({ title, description, currentYear }: Props) {
     pageSize: 50,
     pageCount: 1,
     genreOptions: [],
-    yearBounds: { min: MIN_PUBLISH_YEAR, max: currentYear },
+    yearBounds: { min: MIN_PUBLISH_YEAR, max: new Date().getFullYear() },
   });
   const [loadedEndpoint, setLoadedEndpoint] = useState("");
 
   const filterKey = useMemo(
     () =>
       JSON.stringify({
-        currentYear,
-        currentYearOnly,
         exactGenre,
         genre,
         minCombinedScore,
@@ -101,17 +100,7 @@ export function BookTable({ title, description, currentYear }: Props) {
         query,
         yearRange,
       }),
-    [
-      currentYear,
-      currentYearOnly,
-      exactGenre,
-      genre,
-      minCombinedScore,
-      minCriticReviews,
-      minRatings,
-      query,
-      yearRange,
-    ],
+    [exactGenre, genre, minCombinedScore, minCriticReviews, minRatings, query, yearRange],
   );
 
   useEffect(() => {
@@ -127,26 +116,23 @@ export function BookTable({ title, description, currentYear }: Props) {
     setMinRatings("");
     setMinCriticReviews("");
     setMinCombinedScore("");
-    setCurrentYearOnly(false);
     setYearRange(null);
     setPage(1);
     setRandomPickActive(false);
   };
 
   const bounds = response.yearBounds;
-  const sliderValue: [number, number] = currentYearOnly
-    ? [currentYear, currentYear]
-    : yearRange ?? [bounds.min, bounds.max];
+  const sliderValue: [number, number] = yearRange ?? [bounds.min, bounds.max];
+  const updatedLabel = latestUpdate
+    ? new Date(latestUpdate).toLocaleDateString()
+    : "Pending";
 
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({
       requireBookmarks: "true",
     });
 
-    if (currentYearOnly) {
-      params.set("minYear", String(currentYear));
-      params.set("maxYear", String(currentYear));
-    } else if (yearRange) {
+    if (yearRange) {
       params.set("minYear", String(yearRange[0]));
       params.set("maxYear", String(yearRange[1]));
     }
@@ -186,8 +172,6 @@ export function BookTable({ title, description, currentYear }: Props) {
 
     return `/api/books?${params.toString()}`;
   }, [
-    currentYear,
-    currentYearOnly,
     exactGenre,
     genre,
     minCombinedScore,
@@ -265,11 +249,14 @@ export function BookTable({ title, description, currentYear }: Props) {
           <h2>{title}</h2>
           <p>{description}</p>
         </div>
-        <span>
-          {randomPickActive
-            ? `Random pick from ${response.total.toLocaleString()} books`
-            : `${response.total.toLocaleString()} books`}
-          {loadedEndpoint === endpoint ? "" : " · loading"}
+        <span className="panelMeta">
+          <span>
+            {randomPickActive
+              ? `Random pick from ${response.total.toLocaleString()} books`
+              : `${response.total.toLocaleString()} books`}
+            {loadedEndpoint === endpoint ? "" : " · loading"}
+          </span>
+          <span>Updated {updatedLabel}</span>
         </span>
       </div>
 
@@ -380,13 +367,14 @@ export function BookTable({ title, description, currentYear }: Props) {
         <label className="checkbox">
           <input
             type="checkbox"
-            checked={currentYearOnly}
+            checked={genre === BOOK_CLUB_GENRE}
             onChange={(event) => {
-              setCurrentYearOnly(event.target.checked);
+              setGenre(event.target.checked ? BOOK_CLUB_GENRE : "");
+              setExactGenre(false);
               setPage(1);
             }}
           />
-          Current year only
+          Book Club
         </label>
 
         <div className="sliderControl">
@@ -394,7 +382,6 @@ export function BookTable({ title, description, currentYear }: Props) {
             min={bounds.min}
             max={bounds.max}
             value={sliderValue}
-            disabled={currentYearOnly}
             onChange={(value) => {
               setYearRange(value);
               setPage(1);
