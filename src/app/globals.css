@@ -109,15 +109,23 @@ td span {
 
 .panelMeta {
   align-items: flex-end;
-  background: #f1eee9;
-  border-radius: 999px;
-  color: var(--muted);
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
+  gap: 6px;
+}
+
+.panelCount {
+  background: #f1eee9;
+  border-radius: 999px;
+  color: var(--muted);
   font-size: 14px;
-  gap: 2px;
   padding: 8px 12px;
+}
+
+.panelUpdated {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .controls {

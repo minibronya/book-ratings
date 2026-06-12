@@ -70,7 +70,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [query, setQuery] = useState("");
   const [genre, setGenre] = useState("");
-  const [exactGenre, setExactGenre] = useState(false);
   const [minRatings, setMinRatings] = useState("");
   const [minCriticReviews, setMinCriticReviews] = useState("");
   const [minCombinedScore, setMinCombinedScore] = useState("");
@@ -92,7 +91,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
   const filterKey = useMemo(
     () =>
       JSON.stringify({
-        exactGenre,
         genre,
         minCombinedScore,
         minCriticReviews,
@@ -100,7 +98,7 @@ export function BookTable({ title, description, latestUpdate }: Props) {
         query,
         yearRange,
       }),
-    [exactGenre, genre, minCombinedScore, minCriticReviews, minRatings, query, yearRange],
+    [genre, minCombinedScore, minCriticReviews, minRatings, query, yearRange],
   );
 
   useEffect(() => {
@@ -112,7 +110,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
     setSortDir("desc");
     setQuery("");
     setGenre("");
-    setExactGenre(false);
     setMinRatings("");
     setMinCriticReviews("");
     setMinCombinedScore("");
@@ -139,9 +136,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
 
     if (genre) {
       params.set("genre", genre);
-      if (exactGenre) {
-        params.set("genreExact", "true");
-      }
     }
 
     if (minRatings) {
@@ -172,7 +166,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
 
     return `/api/books?${params.toString()}`;
   }, [
-    exactGenre,
     genre,
     minCombinedScore,
     minCriticReviews,
@@ -249,15 +242,15 @@ export function BookTable({ title, description, latestUpdate }: Props) {
           <h2>{title}</h2>
           <p>{description}</p>
         </div>
-        <span className="panelMeta">
-          <span>
+        <div className="panelMeta">
+          <span className="panelCount">
             {randomPickActive
               ? `Random pick from ${response.total.toLocaleString()} books`
               : `${response.total.toLocaleString()} books`}
             {loadedEndpoint === endpoint ? "" : " · loading"}
           </span>
-          <span>Updated {updatedLabel}</span>
-        </span>
+          <span className="panelUpdated">Updated {updatedLabel}</span>
+        </div>
       </div>
 
       <div className="controls">
@@ -280,9 +273,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
             onChange={(event) => {
               setGenre(event.target.value);
               setPage(1);
-              if (!event.target.value) {
-                setExactGenre(false);
-              }
             }}
           >
             <option value="">
@@ -295,20 +285,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
             ))}
           </select>
         </label>
-
-        {genre ? (
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={exactGenre}
-              onChange={(event) => {
-                setExactGenre(event.target.checked);
-                setPage(1);
-              }}
-            />
-            Only this genre
-          </label>
-        ) : null}
 
         <label>
           Min combined score
@@ -370,7 +346,6 @@ export function BookTable({ title, description, latestUpdate }: Props) {
             checked={genre === BOOK_CLUB_GENRE}
             onChange={(event) => {
               setGenre(event.target.checked ? BOOK_CLUB_GENRE : "");
-              setExactGenre(false);
               setPage(1);
             }}
           />
